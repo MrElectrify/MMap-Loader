@@ -7,6 +7,13 @@
 
 #include <Windows.h>
 
-extern "C" bool Inject(HANDLE hProc, void* buffer, size_t len);
+struct Result
+{
+	bool success;
+	NTSTATUS status;
+	const char* statusStr;
+};
+
+extern "C" void Inject(HANDLE hProc, void* buffer, size_t len, Result* result);
 
 #endif
