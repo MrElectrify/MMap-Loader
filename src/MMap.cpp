@@ -1,9 +1,9 @@
+#include <MMapLoader/MMap.h>
+
 #include <BlackBone/ManualMap/MMap.h>
 #include <BlackBone/Process/Process.h>
 
 #include <vector>
-
-#include <Windows.h>
 
 bool Inject(HANDLE hProc, void* buffer, size_t len)
 {
