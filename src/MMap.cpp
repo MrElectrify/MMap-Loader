@@ -3,20 +3,21 @@
 #include <BlackBone/ManualMap/MMap.h>
 #include <BlackBone/Process/Process.h>
 
+#include <array>
 #include <system_error>
 
 const char* FormatNTStatus(NTSTATUS status)
 {
-	static char buf[256];
+	static std::array<char, 256> buf;
 	static const auto ntHandle = LoadLibraryW(L"ntdll.dll");
 	if (FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_FROM_HMODULE,
-		ntHandle, status, 0, buf, sizeof(buf), nullptr) == 0)
+		ntHandle, status, 0, buf.data(), buf.size(), nullptr) == 0)
 	{
 		// yikes, we even failed this.
 		const auto str = std::system_category().message(GetLastError());
-		strncpy_s(buf, str.c_str(), str.size());
+		strncpy(buf.data(), str.c_str(), str.size());
 	}
-	return buf;
+	return buf.data();
 }
 
 void Inject(HANDLE hProc, void* buffer, size_t len, Result* pResult)
