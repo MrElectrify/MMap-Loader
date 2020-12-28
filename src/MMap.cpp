@@ -56,6 +56,7 @@ void Inject(HANDLE hProc, void* buffer, size_t len, Result* pResult)
 			process.Detach();
 			continue;
 		}
+		break;
 	}
 	const auto image = process.mmap().MapImage(len, buffer);
 	if (image.success() == false)
