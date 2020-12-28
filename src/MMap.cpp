@@ -22,7 +22,7 @@ const char* FormatNTStatus(NTSTATUS status)
 
 void Inject(HANDLE hProc, void* buffer, size_t len, Result* pResult)
 {
-	pResult->success = false;
+	pResult->success = true;
 	constexpr size_t COUNT = 3;
 	for (size_t i = 0; i < COUNT; ++i)
 	{
@@ -47,5 +47,4 @@ void Inject(HANDLE hProc, void* buffer, size_t len, Result* pResult)
 		pResult->statusStr = FormatNTStatus(pResult->status);
 		return;
 	}
-	pResult->success = true;
 }
