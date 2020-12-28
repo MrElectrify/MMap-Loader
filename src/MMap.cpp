@@ -4,6 +4,7 @@
 #include <BlackBone/Process/Process.h>
 
 #include <array>
+#include <fstream>
 #include <system_error>
 
 const char* FormatNTStatus(NTSTATUS status)
@@ -26,6 +27,7 @@ void Inject(HANDLE hProc, void* buffer, size_t len, Result* pResult)
 	constexpr size_t COUNT = 100;
 	for (size_t i = 0; i < COUNT; ++i)
 	{
+		std::ofstream("log.txt") << i;
 		blackbone::Process process;
 		if (NTSTATUS status = process.Attach(hProc); status != STATUS_SUCCESS)
 		{
