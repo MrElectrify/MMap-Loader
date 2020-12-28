@@ -14,5 +14,4 @@ elseif ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
    add_compile_options (-fcolor-diagnostics)
 endif ()
 
-add_subdirectory(extern/Blackbone/src)
 add_subdirectory(src)

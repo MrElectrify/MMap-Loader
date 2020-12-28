@@ -28,5 +28,4 @@ file(GLOB_RECURSE sourceFiles ${CMAKE_SOURCE_DIR}/src/*.cpp)
 add_library(MMapLoader ${sourceFiles})
 
 target_include_directories(MMapLoader
-    PUBLIC ../include
-    PUBLIC ../extern/BlackBone/src)
+    PUBLIC ../include)

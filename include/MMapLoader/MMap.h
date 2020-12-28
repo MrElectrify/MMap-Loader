@@ -10,7 +10,7 @@
 struct Result
 {
 	bool success;
-	NTSTATUS status;
+	DWORD status;
 	const char* statusStr;
 };
 
