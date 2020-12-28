@@ -22,20 +22,28 @@ const char* FormatNTStatus(NTSTATUS status)
 
 void Inject(HANDLE hProc, void* buffer, size_t len, Result* pResult)
 {
-	blackbone::Process process;
-	if (NTSTATUS status = process.Attach(hProc); status != STATUS_SUCCESS)
+	constexpr size_t COUNT = 3;
+	for (size_t i = 0; i < COUNT; ++i)
 	{
-		pResult->success = false;
-		pResult->status = status;
-		pResult->statusStr = FormatNTStatus(status);
-		return;
+		blackbone::Process process;
+		if (NTSTATUS status = process.Attach(hProc); status != STATUS_SUCCESS)
+		{
+			pResult->success = false;
+			pResult->status = status;
+			continue;
+		}
+		const auto image = process.mmap().MapImage(len, buffer);
+		if (image.success() == false)
+		{
+			pResult->success = false;
+			pResult->status = image.status;
+			continue;
+		}
+		break;
 	}
-	const auto image = process.mmap().MapImage(len, buffer);
-	if (image.success() == false)
+	if (pResult->success == false)
 	{
-		pResult->success = false;
-		pResult->status = image.status;
-		pResult->statusStr = FormatNTStatus(image.status);
+		pResult->statusStr = FormatNTStatus(pResult->status);
 		return;
 	}
 	pResult->success = true;

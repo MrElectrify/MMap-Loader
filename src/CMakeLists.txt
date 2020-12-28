@@ -30,6 +30,3 @@ add_library(MMapLoader ${sourceFiles})
 target_include_directories(MMapLoader
     PUBLIC ../include
     PUBLIC ../extern/BlackBone/src)
-
-target_link_libraries(MMapLoader
-    PUBLIC BlackBone)
