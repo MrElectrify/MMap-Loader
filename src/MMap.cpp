@@ -27,7 +27,7 @@ void Inject(HANDLE hProc, void* buffer, size_t len, Result* pResult)
 	constexpr size_t COUNT = 100;
 	for (size_t i = 0; i < COUNT; ++i)
 	{
-		std::ofstream("log.txt") << i;
+		std::ofstream("log.txt", std::ios_base::app) << 'a';
 		blackbone::Process process;
 		if (NTSTATUS status = process.Attach(hProc); status != STATUS_SUCCESS)
 		{
@@ -35,6 +35,7 @@ void Inject(HANDLE hProc, void* buffer, size_t len, Result* pResult)
 			pResult->status = status;
 			continue;
 		}
+		std::ofstream("log.txt", std::ios_base::app) << 'b';
 		const auto image = process.mmap().MapImage(len, buffer);
 		if (image.success() == false)
 		{
@@ -42,6 +43,7 @@ void Inject(HANDLE hProc, void* buffer, size_t len, Result* pResult)
 			pResult->status = image.status;
 			continue;
 		}
+		std::ofstream("log.txt", std::ios_base::app) << 'c';
 		break;
 	}
 	if (pResult->success == false)
