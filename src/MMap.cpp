@@ -23,32 +23,21 @@ const char* FormatNTStatus(NTSTATUS status)
 
 void Inject(HANDLE hProc, void* buffer, size_t len, Result* pResult)
 {
-	pResult->success = true;
-	constexpr size_t COUNT = 100;
-	for (size_t i = 0; i < COUNT; ++i)
+	blackbone::Process process;
+	if (NTSTATUS status = process.Attach(hProc); status != STATUS_SUCCESS)
 	{
-		std::ofstream("log.txt", std::ios_base::app) << 'a';
-		blackbone::Process process;
-		if (NTSTATUS status = process.Attach(hProc); status != STATUS_SUCCESS)
-		{
-			pResult->success = false;
-			pResult->status = status;
-			continue;
-		}
-		std::ofstream("log.txt", std::ios_base::app) << 'b';
-		const auto image = process.mmap().MapImage(len, buffer);
-		if (image.success() == false)
-		{
-			pResult->success = false;
-			pResult->status = image.status;
-			continue;
-		}
-		std::ofstream("log.txt", std::ios_base::app) << 'c';
-		break;
-	}
-	if (pResult->success == false)
-	{
+		pResult->success = false;
+		pResult->status = status;
 		pResult->statusStr = FormatNTStatus(pResult->status);
 		return;
 	}
+	const auto image = process.mmap().MapImage(len, buffer);
+	if (image.success() == false)
+	{
+		pResult->success = false;
+		pResult->status = image.status;
+		pResult->statusStr = FormatNTStatus(pResult->status);
+		return;
+	}
+	pResult->success = true;
 }
