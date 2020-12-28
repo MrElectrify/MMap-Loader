@@ -22,49 +22,29 @@ const char* FormatNTStatus(NTSTATUS status)
 
 void Inject(HANDLE hProc, void* buffer, size_t len, Result* pResult)
 {
-	// load the image and get imports
-	blackbone::pe::PEImage dllImage;	
-	if (NTSTATUS status = dllImage.Load(buffer, len); status != STATUS_SUCCESS)
+	pResult->success = true;
+	constexpr size_t COUNT = 100;
+	for (size_t i = 0; i < COUNT; ++i)
 	{
-		pResult->success = false;
-		pResult->status = status;
-		pResult->statusStr = FormatNTStatus(pResult->status);
-		return;
-	}
-	// repeatedly attach to the process and verify that all imports are present
-	blackbone::Process process;
-	while (true)
-	{
-		NTSTATUS status = process.Attach(hProc);
-		if (status != STATUS_SUCCESS)
+		blackbone::Process process;
+		if (NTSTATUS status = process.Attach(hProc); status != STATUS_SUCCESS)
 		{
-			process.Detach();
+			pResult->success = false;
+			pResult->status = status;
 			continue;
 		}
-		// enumerate modules to see if all dependencies are loaded
-		bool loaded = true;
-		for (const auto& import : dllImage.GetImports())
+		const auto image = process.mmap().MapImage(len, buffer);
+		if (image.success() == false)
 		{
-			if (process.modules().GetModule(import.first) == nullptr)
-			{
-				loaded = false;
-				break;
-			}
-		}
-		if (loaded == false)
-		{
-			process.Detach();
+			pResult->success = false;
+			pResult->status = image.status;
 			continue;
 		}
 		break;
 	}
-	const auto image = process.mmap().MapImage(len, buffer);
-	if (image.success() == false)
+	if (pResult->success == false)
 	{
-		pResult->success = false;
-		pResult->status = image.status;
 		pResult->statusStr = FormatNTStatus(pResult->status);
 		return;
 	}
-	pResult->success = true;
 }
