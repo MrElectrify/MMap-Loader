@@ -16,3 +16,4 @@ endif ()
 
 add_subdirectory(extern/Blackbone/src)
 add_subdirectory(src)
+add_subdirectory(Test)
