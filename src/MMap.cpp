@@ -1,6 +1,7 @@
 #include <MMapLoader/MMap.h>
 
 #include <BlackBone/ManualMap/MMap.h>
+#include <BlackBone/Process/Process.h>
 
 #include <array>
 #include <fstream>
@@ -20,8 +21,17 @@ const char* FormatNTStatus(NTSTATUS status)
 	return buf.data();
 }
 
-void Inject(HANDLE hProc, void* buffer, size_t len, Result* pResult)
+void Run(void* buffer, size_t len, Result* pResult)
 {
-	
+	blackbone::Process thisProc;
+	if (auto status = thisProc.Attach(GetCurrentProcess());
+		status != STATUS_SUCCESS)
+	{
+		// failed to attach to the current process?
+		pResult->status = status;
+		pResult->statusStr = FormatNTStatus(status);
+		pResult->success = false;
+		return;
+	}
 	pResult->success = true;
 }

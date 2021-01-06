@@ -14,6 +14,6 @@ struct Result
 	const char* statusStr;
 };
 
-extern "C" void Inject(HANDLE hProc, void* buffer, size_t len, Result* result);
+extern "C" void Run(void* buffer, size_t len, Result* result);
 
 #endif
