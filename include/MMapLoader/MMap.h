@@ -7,13 +7,21 @@
 
 #include <Windows.h>
 
+enum Stage
+{
+	Attach,
+	MapExe,
+	MapDll
+};
+
 struct Result
 {
 	bool success;
 	NTSTATUS status;
 	const char* statusStr;
+	Stage stage;
 };
 
-extern "C" void Run(void* buffer, size_t len, Result* result);
+extern "C" void Run(const char* exePath, size_t exePathLen, void* dllBuf, size_t dllBufLen, Result* result);
 
 #endif

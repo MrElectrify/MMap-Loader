@@ -4,8 +4,11 @@
 #include <BlackBone/Process/Process.h>
 
 #include <array>
+#include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <system_error>
+#include <vector>
 
 const char* FormatNTStatus(NTSTATUS status)
 {
@@ -21,17 +24,61 @@ const char* FormatNTStatus(NTSTATUS status)
 	return buf.data();
 }
 
-void Run(void* buffer, size_t len, Result* pResult)
+void Run(const char* exePathStr, size_t exePathLen, void* dllBuf, size_t dllBufLen, Result* result)
 {
 	blackbone::Process thisProc;
+	// attach to the current process
 	if (auto status = thisProc.Attach(GetCurrentProcess());
 		status != STATUS_SUCCESS)
 	{
 		// failed to attach to the current process?
-		pResult->status = status;
-		pResult->statusStr = FormatNTStatus(status);
-		pResult->success = false;
+		result->status = status;
+		result->statusStr = FormatNTStatus(status);
+		result->success = false;
+		result->stage = Stage::Attach;
 		return;
 	}
-	pResult->success = true;
+	std::error_code ec;
+	std::string_view exePathStrV(exePathStr, exePathLen);
+	if (std::filesystem::exists(exePathStrV) == false ||
+		std::filesystem::is_regular_file(exePathStrV) == false)
+	{
+		result->status = STATUS_FILE_NOT_AVAILABLE;
+		result->statusStr = FormatNTStatus(result->status);
+		result->success = false;
+		result->stage = Stage::MapExe;
+		return;
+	}
+	std::filesystem::path exePath(exePathStrV);
+	// set the current directory to the root of the exe
+	const auto oldWorkingDirectory = std::filesystem::current_path();
+	std::filesystem::current_path(exePath.parent_path(), ec);
+	if (ec)
+	{
+		result->status = ec.value();
+		result->statusStr = ec.message().c_str();
+		result->success = false;
+		result->stage = Stage::MapExe;
+		return;
+	}
+	std::ifstream inFile(exePath, std::ios_base::binary);
+	inFile.seekg(0, SEEK_END);
+	size_t size = inFile.tellg();
+	inFile.seekg(0, SEEK_SET);
+	std::vector<char> fileBuf(size);
+	inFile.read(fileBuf.data(), fileBuf.size());
+	// attempt to map the exe into the current process
+	if (auto status = thisProc.mmap().MapImage(fileBuf.size(), fileBuf.data(), false,
+		blackbone::eLoadFlags::NoDelayLoad);
+		status.success() == false)
+	{
+		// failed to map image
+		result->status = status.status;
+		result->statusStr = FormatNTStatus(status.status);
+		result->success = false;
+		result->stage = Stage::MapExe;
+		return;
+	}
+	std::filesystem::current_path(oldWorkingDirectory, ec);
+	result->success = true;
 }
