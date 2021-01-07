@@ -67,6 +67,9 @@ void Run(const char* exePathStr, size_t exePathLen, void* dllBuf, size_t dllBufL
 	inFile.seekg(0, SEEK_SET);
 	std::vector<char> fileBuf(size);
 	inFile.read(fileBuf.data(), fileBuf.size());
+	// set the data directory
+	SetEnvironmentVariableA("GAME_DATA_DIR",
+		exePath.parent_path().string().c_str());
 	// attempt to map the exe into the current process
 	if (auto status = thisProc.mmap().MapImage(fileBuf.size(), fileBuf.data(), false,
 		blackbone::eLoadFlags::NoDelayLoad);
