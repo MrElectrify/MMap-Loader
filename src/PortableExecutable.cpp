@@ -26,8 +26,10 @@ std::optional<std::variant<DWORD, NTSTATUS>> PortableExecutable::Load(const std:
 	if (m_image == nullptr)
 		return GetLastError();
 	// copy the headers
-	memcpy(m_image.get(), &m_dosHeader, 
-		m_ntHeaders.OptionalHeader.SizeOfHeaders);
+	if (m_peFile.seekg(0).fail() == true ||
+		m_peFile.read(reinterpret_cast<char*>(m_image.get()),
+			m_ntHeaders.OptionalHeader.SizeOfHeaders).fail() == true)
+		return STATUS_END_OF_FILE;
 	// now load sections
 	if (NTSTATUS status = LoadSections();
 		status != STATUS_SUCCESS)
