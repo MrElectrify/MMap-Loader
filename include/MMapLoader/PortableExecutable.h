@@ -15,7 +15,9 @@
 #include <vector>
 
 // Windows includes
+#define WIN32_LEAN_AND_MEAN 1
 #include <Windows.h>
+#include <bcrypt.h>
 
 namespace MMapLoader
 {
@@ -33,15 +35,35 @@ namespace MMapLoader
 		/// @param path The path of the executable
 		/// @return The status code
 		std::optional<std::variant<DWORD, NTSTATUS>> Load(const std::string& path) noexcept;
+		/// @brief Runs the entry point of the executable
+		/// @return The return code of the entry point
+		int Run() noexcept;
 	private:
 		/// @brief Loads NT Headers from the pe file
-		/// @param peFile The pe file
 		/// @return The status code
-		NTSTATUS LoadHeaders(std::ifstream& peFile) noexcept;
+		NTSTATUS LoadHeaders() noexcept;
 		/// @brief Loads sections from the pe file
-		/// @param peFile The pe file
 		/// @return The status code
-		NTSTATUS LoadSections(std::ifstream& peFile) noexcept;
+		NTSTATUS LoadSections() noexcept;
+		/// @brief Process the executable's relocations
+		/// @return The status code
+		NTSTATUS ProcessRelocations() noexcept;
+		/// @brief Resolve the executable's imports
+		/// @return The status code
+		NTSTATUS ResolveImports() noexcept;
+
+		/// @brief Gets a structure at an RVA offset
+		/// @tparam T The type to get
+		/// @param offset The offset to the structure
+		/// @return The structure
+		template<typename T>
+		T* GetRVA(uintptr_t offset)
+		{
+			return reinterpret_cast<T*>(
+				reinterpret_cast<uintptr_t>(m_image.get()) + offset);
+		}
+
+		std::ifstream m_peFile;
 
 		IMAGE_DOS_HEADER m_dosHeader;
 		IMAGE_NT_HEADERS m_ntHeaders;

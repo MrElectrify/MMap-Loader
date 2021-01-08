@@ -3,6 +3,7 @@
 #include <MMapLoader/PortableExecutable.h>
 
 #include <array>
+#include <filesystem>
 #include <system_error>
 
 const char* FormatError(int error)
@@ -29,6 +30,21 @@ const char* FormatNTStatus(NTSTATUS status)
 
 void Run(const char* exePathStr, size_t exePathLen, void* dllBuf, size_t dllBufLen, Result* result)
 {
+	std::filesystem::path exePath(std::string_view(exePathStr, exePathLen));
+	// set the current directory to the root of the exe
+	const auto oldWorkingDirectory = std::filesystem::current_path();
+	std::error_code ec;
+	std::filesystem::current_path(exePath.parent_path(), ec);
+	if (ec)
+	{
+		result->status = ec.value();
+		static std::array<char, 256> buf;
+		const auto str = ec.message();
+		strncpy_s(buf.data(), buf.size(), str.c_str(), str.size());
+		result->statusStr = buf.data();
+		result->success = false;
+		return;
+	}
 	MMapLoader::PortableExecutable executable;
 	if (auto status = executable.Load(std::string(exePathStr, exePathLen));
 		status.has_value() == true)
@@ -47,5 +63,9 @@ void Run(const char* exePathStr, size_t exePathLen, void* dllBuf, size_t dllBufL
 		}
 		return;
 	}
+	// set the GAME_DATA_DIR variable
+	SetEnvironmentVariableA("GAME_DATA_DIR",
+		exePath.parent_path().string().c_str());
+	executable.Run();
 	result->success = true;
 }
