@@ -1,5 +1,8 @@
 project(MMapLoader CXX)
 
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED True)
+
 if(WIN32)
     macro(get_WIN32_WINNT version)
         if(CMAKE_SYSTEM_VERSION)
@@ -30,7 +33,3 @@ add_library(MMapLoader ${sourceFiles})
 target_include_directories(MMapLoader
     PUBLIC ../include
     PUBLIC ../extern/BlackBone/src)
-
-target_link_libraries(MMapLoader
-    PUBLIC BlackBone
-    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../extern/diaguids.lib)

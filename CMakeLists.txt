@@ -16,6 +16,5 @@ endif ()
 
 include(cmake/CompilerWarnings.cmake)
 
-add_subdirectory(extern/Blackbone/src)
 add_subdirectory(src)
 add_subdirectory(Test)
