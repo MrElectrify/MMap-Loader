@@ -10,7 +10,8 @@ int main()
 	Run(gameStr.data(), gameStr.size(), nullptr, 0, &res);
 	if (res.success == false)
 	{
-		std::cerr << "Failed to start: " << res.statusStr << " (" << res.status << ")\n";
+		std::cerr << "Failed to start: " << res.statusStr << " (" << 
+			std::hex << res.status << ")\n" << std::dec;
 		return 1;
 	}
 	std::cout << "Success\n";

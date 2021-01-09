@@ -2,46 +2,108 @@
 
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <type_traits>
 
 #include <ntstatus.h>
+#include <winternl.h>
+
+#define FILE_SYNCHRONOUS_IO_NONALERT   0x00000020
+#define FILE_NON_DIRECTORY_FILE   0x00000040
+
+typedef struct _RTLP_CURDIR_REF
+{
+	LONG RefCount;
+	HANDLE Handle;
+} RTLP_CURDIR_REF, * PRTLP_CURDIR_REF;
+
+typedef struct RTL_RELATIVE_NAME_U {
+	UNICODE_STRING RelativeName;
+	HANDLE ContainingDirectory;
+	PRTLP_CURDIR_REF CurDirRef;
+} RTL_RELATIVE_NAME_U, * PRTL_RELATIVE_NAME_U;
+
+typedef enum _SECTION_INHERIT {
+	ViewShare = 1,
+	ViewUnmap = 2
+} SECTION_INHERIT, * PSECTION_INHERIT;
 
 using MMapLoader::PortableExecutable;
 
 std::optional<std::variant<DWORD, NTSTATUS>> PortableExecutable::Load(const std::string& path) noexcept
 {
-	// first, try to open the file
-	m_peFile.open(path, std::ios_base::binary);
-	if (m_peFile.good() == false)
-		return STATUS_FILE_NOT_AVAILABLE;
-	// import headers
-	if (NTSTATUS status = LoadHeaders();
-		status != STATUS_SUCCESS)
-		return status;
-	// attempt to allocate memory for the process
-	m_image = std::shared_ptr<void>(VirtualAlloc(
-		reinterpret_cast<LPVOID>(m_ntHeaders.OptionalHeader.ImageBase),
-		m_ntHeaders.OptionalHeader.SizeOfImage, MEM_COMMIT | MEM_RESERVE,
-		PAGE_EXECUTE_READWRITE), std::bind(VirtualFree,
-			std::placeholders::_1, 0, MEM_DECOMMIT | MEM_RELEASE));
-	if (m_image == nullptr)
+	// first, resolve ntdll functions
+	const auto hNtDll = GetModuleHandle("ntdll");
+	if (hNtDll == nullptr)
 		return GetLastError();
-	// copy the headers
-	if (m_peFile.seekg(0).fail() == true ||
-		m_peFile.read(reinterpret_cast<char*>(m_image.get()),
-			m_ntHeaders.OptionalHeader.SizeOfHeaders).fail() == true)
-		return STATUS_END_OF_FILE;
-	// now load sections
-	if (NTSTATUS status = LoadSections();
+	using NtClose_t = std::add_pointer_t<decltype(NtClose)>;
+	using NtCreateSection_t = std::add_pointer_t <NTSTATUS NTAPI(PHANDLE SectionHandle,
+		ACCESS_MASK DesiredAccess, POBJECT_ATTRIBUTES ObjectAttributes,
+		PLARGE_INTEGER MaximumSize, ULONG SectionPageProtection,
+		ULONG AllocationAttributes, HANDLE FileHandle)>;
+	using NtMapViewOfSection_t = std::add_pointer_t<NTSTATUS NTAPI(HANDLE SectionHandle,
+		HANDLE ProcessHandle, PVOID* BaseAddress, ULONG_PTR ZeroBits, SIZE_T CommitSize,
+		PLARGE_INTEGER SectionOffset, PSIZE_T ViewSize, SECTION_INHERIT InheritDisposition,
+		ULONG AllocationType, ULONG Protect)>;
+	using NtUnmapViewOfSection_t = std::add_pointer_t<NTSTATUS NTAPI(HANDLE ProcessHandle,
+		PVOID BaseAddress)>;
+	const NtClose_t NtClose_f = reinterpret_cast<NtClose_t>(
+		GetProcAddress(hNtDll, "NtClose"));
+	const NtCreateSection_t NtCreateSection_f = reinterpret_cast<NtCreateSection_t>(
+		GetProcAddress(hNtDll, "NtCreateSection"));
+	const NtMapViewOfSection_t NtMapViewOfSection_f = reinterpret_cast<NtMapViewOfSection_t>(
+		GetProcAddress(hNtDll, "NtMapViewOfSection"));
+	const NtUnmapViewOfSection_t NtUnmapViewOfSection_f = 
+		reinterpret_cast<NtUnmapViewOfSection_t>(
+			GetProcAddress(hNtDll, "NtUnmapViewOfSection"));
+	if (NtClose_f == nullptr || NtCreateSection_f == nullptr || 
+		NtMapViewOfSection_f == nullptr || NtUnmapViewOfSection_f == nullptr)
+		return GetLastError();
+	// open the file for execution
+	OBJECT_ATTRIBUTES localObjectAttributes;
+	HANDLE fileHandleRaw = nullptr;
+	if (fileHandleRaw = CreateFile(path.c_str(), SYNCHRONIZE | FILE_EXECUTE, 
+		NULL, nullptr, OPEN_EXISTING, NULL, nullptr); fileHandleRaw == nullptr)
+		return GetLastError();
+	std::unique_ptr<std::remove_pointer_t<HANDLE>, 
+		std::add_pointer_t<decltype(CloseHandle)>>
+		fileHandle(fileHandleRaw, CloseHandle);
+	// now we can create a section
+	HANDLE sectionHandleRaw = nullptr;
+	if (NTSTATUS status = NtCreateSection_f(&sectionHandleRaw,
+		SECTION_ALL_ACCESS, nullptr, nullptr, PAGE_EXECUTE, SEC_IMAGE,
+		fileHandle.get()); status != STATUS_SUCCESS)
+		return status;
+	std::shared_ptr<std::remove_pointer_t<HANDLE>>
+		sectionHandle(sectionHandleRaw, NtClose_f);
+	// map the section
+	SIZE_T viewSize = 0;
+	PVOID imageBase = nullptr;
+	if (NTSTATUS status = NtMapViewOfSection_f(sectionHandle.get(),
+		GetCurrentProcess(), &imageBase, 0, 0, nullptr, &viewSize,
+		SECTION_INHERIT::ViewUnmap, 0, PAGE_EXECUTE_READWRITE);
 		status != STATUS_SUCCESS)
 		return status;
-	// and process relocations
-	if (NTSTATUS status = ProcessRelocations();
-		status != STATUS_SUCCESS)
-		return status;
+	// save the view to be unmapped
+	m_image = std::shared_ptr<void>(imageBase, 
+		[NtUnmapViewOfSection_f, sectionHandle](void* imageBase) 
+		{
+			// this is a lambda so that the section is closed after
+			// the section is unmapped
+			NtUnmapViewOfSection_f(GetCurrentProcess(), imageBase);
+		});
+	// verify that the image is for x86_64
+	const auto pDOSHeader = GetRVA<const IMAGE_DOS_HEADER>(0);
+	const auto pNTHeader = GetRVA<const IMAGE_NT_HEADERS>(pDOSHeader->e_lfanew);
+	if (pNTHeader->FileHeader.Machine != IMAGE_FILE_MACHINE_AMD64 ||
+		pNTHeader->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC)
+	{
+		// remove the image
+		m_image = nullptr;
+		return STATUS_INVALID_IMAGE_FORMAT;
+	}
 	// resolve imports
-	if (NTSTATUS status = ResolveImports();
-		status != STATUS_SUCCESS)
+	if (NTSTATUS status = ResolveImports(); status != STATUS_SUCCESS)
 		return status;
 	return std::nullopt;
 }
@@ -50,71 +112,17 @@ int PortableExecutable::Run() noexcept
 {
 	if (m_image == nullptr)
 		return -1;
-	auto EntryPoint_f = GetRVA<int()>(m_ntHeaders.OptionalHeader.AddressOfEntryPoint);
+	const auto pDOSHeader = GetRVA<const IMAGE_DOS_HEADER>(0);
+	const auto pNTHeaders = GetRVA<const IMAGE_NT_HEADERS>(pDOSHeader->e_lfanew);
+	auto EntryPoint_f = GetRVA<int()>(pNTHeaders->OptionalHeader.AddressOfEntryPoint);
 	return EntryPoint_f();
-}
-
-NTSTATUS PortableExecutable::LoadHeaders() noexcept
-{
-	// first, load the DOS header
-	if (m_peFile.read(reinterpret_cast<char*>(&m_dosHeader), 
-		sizeof(m_dosHeader)).fail() == true)
-		return STATUS_END_OF_FILE;
-	// check the magic number
-	if (m_dosHeader.e_magic != 0x5a4d)
-		return STATUS_INVALID_IMAGE_NOT_MZ;
-	// seek to the nt headers and load it
-	if (m_peFile.seekg(m_dosHeader.e_lfanew).fail() == true ||
-		m_peFile.read(reinterpret_cast<char*>(&m_ntHeaders), 
-			sizeof(m_ntHeaders)).fail() == true)
-		return STATUS_END_OF_FILE;
-	// verify the architecture
-	if (m_ntHeaders.FileHeader.Machine != IMAGE_FILE_MACHINE_AMD64)
-		return STATUS_INVALID_IMAGE_FORMAT;
-	// make space for the section headers and load them
-	m_sectionHeaders.resize(m_ntHeaders.FileHeader.NumberOfSections);
-	// read sections
-	for (WORD i = 0; i < m_ntHeaders.FileHeader.NumberOfSections; ++i)
-	{
-		if (m_peFile.read(reinterpret_cast<char*>(&m_sectionHeaders[i]), 
-			sizeof(m_sectionHeaders[i])).fail() == true)
-			return STATUS_END_OF_FILE;
-	}
-	return STATUS_SUCCESS;
-}
-
-NTSTATUS PortableExecutable::LoadSections() noexcept
-{
-	// for each section header, load the section into the image
-	for (const auto& sectionHeader : m_sectionHeaders)
-	{
-		if (m_peFile.seekg(sectionHeader.PointerToRawData).fail() == true ||
-			m_peFile.read(reinterpret_cast<char*>(
-				reinterpret_cast<uintptr_t>(m_image.get()) +
-				sectionHeader.VirtualAddress), sectionHeader.SizeOfRawData).fail() == true)
-			return STATUS_END_OF_FILE;
-	}
-	return STATUS_SUCCESS;
-}
-
-NTSTATUS PortableExecutable::ProcessRelocations() noexcept
-{
-	// first, see if there is even a delta
-	uintptr_t delta = reinterpret_cast<uintptr_t>(m_image.get()) -
-		m_ntHeaders.OptionalHeader.ImageBase;
-	if (delta == 0)
-		return STATUS_SUCCESS;
-	// see if it is relocatable
-	if ((m_ntHeaders.OptionalHeader.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE) == 0)
-		return STATUS_INVALID_IMAGE_HASH;
-	// TODO: relocate it
-	return STATUS_SUCCESS;
 }
 
 NTSTATUS PortableExecutable::ResolveImports() noexcept
 {
-	const auto& importDir =
-		m_ntHeaders.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+	const auto pDOSHeader = GetRVA<const IMAGE_DOS_HEADER>(0);
+	const auto pNTHeaders = GetRVA<const IMAGE_NT_HEADERS>(pDOSHeader->e_lfanew);
+	const auto& importDir = pNTHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
 	// import all of the descriptors
 	auto pImportDesc = GetRVA<IMAGE_IMPORT_DESCRIPTOR>(importDir.VirtualAddress);
 	for (; pImportDesc->Name != 0; ++pImportDesc)

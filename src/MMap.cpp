@@ -66,6 +66,6 @@ void Run(const char* exePathStr, size_t exePathLen, void* dllBuf, size_t dllBufL
 	// set the GAME_DATA_DIR variable
 	SetEnvironmentVariableA("GAME_DATA_DIR",
 		exePath.parent_path().string().c_str());
-	executable.Run();
+	//executable.Run();
 	result->success = true;
 }

@@ -39,15 +39,6 @@ namespace MMapLoader
 		/// @return The return code of the entry point
 		int Run() noexcept;
 	private:
-		/// @brief Loads NT Headers from the pe file
-		/// @return The status code
-		NTSTATUS LoadHeaders() noexcept;
-		/// @brief Loads sections from the pe file
-		/// @return The status code
-		NTSTATUS LoadSections() noexcept;
-		/// @brief Process the executable's relocations
-		/// @return The status code
-		NTSTATUS ProcessRelocations() noexcept;
 		/// @brief Resolve the executable's imports
 		/// @return The status code
 		NTSTATUS ResolveImports() noexcept;
@@ -62,12 +53,6 @@ namespace MMapLoader
 			return reinterpret_cast<T*>(
 				reinterpret_cast<uintptr_t>(m_image.get()) + offset);
 		}
-
-		std::ifstream m_peFile;
-
-		IMAGE_DOS_HEADER m_dosHeader;
-		IMAGE_NT_HEADERS m_ntHeaders;
-		std::vector<IMAGE_SECTION_HEADER> m_sectionHeaders;
 
 		std::shared_ptr<void> m_image;
 	};
