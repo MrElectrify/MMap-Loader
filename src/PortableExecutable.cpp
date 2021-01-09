@@ -1,15 +1,11 @@
 #include <MMapLoader/PortableExecutable.h>
 
 #include <fstream>
-#include <iostream>
 #include <memory>
 #include <type_traits>
 
 #include <ntstatus.h>
 #include <winternl.h>
-
-#define FILE_SYNCHRONOUS_IO_NONALERT   0x00000020
-#define FILE_NON_DIRECTORY_FILE   0x00000040
 
 typedef struct _RTLP_CURDIR_REF
 {
@@ -140,12 +136,6 @@ NTSTATUS PortableExecutable::ResolveImports() noexcept
 				reinterpret_cast<LPCSTR>(pThunk->u1.Ordinal & 0xffff) :
 				GetRVA<IMAGE_IMPORT_BY_NAME>(pThunk->u1.AddressOfData)->Name;
 			LPVOID function = GetProcAddress(hLib, procName);
-			std::cout << "Resolved " << libName << ':';
-			if (pThunk->u1.Ordinal & IMAGE_ORDINAL_FLAG)
-				std::cout << reinterpret_cast<uint32_t>(procName);
-			else
-				std::cout << procName;
-			std::cout << " to " << function << '\n';
 			// set the First thunk's function
 			pThunk->u1.Function = reinterpret_cast<ULONGLONG>(function);
 			if (pThunk->u1.Function == 0)
