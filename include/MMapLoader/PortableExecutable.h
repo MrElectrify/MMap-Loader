@@ -42,6 +42,9 @@ namespace MMapLoader
 		/// @brief Resolve the executable's imports
 		/// @return The status code
 		NTSTATUS ResolveImports() noexcept;
+		/// @brief Executes TLS callbacks
+		/// @return The status code
+		NTSTATUS ExecuteTLSCallbacks() noexcept;
 
 		/// @brief Gets a structure at an RVA offset
 		/// @tparam T The type to get

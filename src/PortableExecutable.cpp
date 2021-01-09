@@ -56,7 +56,7 @@ std::optional<std::variant<DWORD, NTSTATUS>> PortableExecutable::Load(const std:
 	OBJECT_ATTRIBUTES localObjectAttributes;
 	HANDLE fileHandleRaw = nullptr;
 	if (fileHandleRaw = CreateFile(path.c_str(), SYNCHRONIZE | FILE_EXECUTE, 
-		NULL, nullptr, OPEN_EXISTING, NULL, nullptr); fileHandleRaw == nullptr)
+		NULL, nullptr, OPEN_EXISTING, NULL, nullptr); fileHandleRaw == INVALID_HANDLE_VALUE)
 		return GetLastError();
 	std::unique_ptr<std::remove_pointer_t<HANDLE>, 
 		std::add_pointer_t<decltype(CloseHandle)>>
@@ -102,6 +102,9 @@ std::optional<std::variant<DWORD, NTSTATUS>> PortableExecutable::Load(const std:
 	// resolve imports
 	if (NTSTATUS status = ResolveImports(); status != STATUS_SUCCESS)
 		return status;
+	// execute TLS callbacks
+	if (NTSTATUS status = ExecuteTLSCallbacks(); status != STATUS_SUCCESS)
+		return status;
 	return std::nullopt;
 }
 
@@ -112,7 +115,15 @@ int PortableExecutable::Run() noexcept
 	const auto pDOSHeader = GetRVA<const IMAGE_DOS_HEADER>(0);
 	const auto pNTHeaders = GetRVA<const IMAGE_NT_HEADERS>(pDOSHeader->e_lfanew);
 	auto EntryPoint_f = GetRVA<int()>(pNTHeaders->OptionalHeader.AddressOfEntryPoint);
-	return EntryPoint_f();
+	auto hThread = CreateThread(nullptr, 0, reinterpret_cast<LPTHREAD_START_ROUTINE>(EntryPoint_f),
+		nullptr, 0, nullptr);
+	if (hThread == nullptr)
+		return GetLastError();
+	WaitForSingleObject(hThread, INFINITE);
+	DWORD exitCode = 0;
+	if (GetExitCodeThread(hThread, &exitCode) == FALSE)
+		return GetLastError();
+	return exitCode;
 }
 
 NTSTATUS PortableExecutable::ResolveImports() noexcept
@@ -146,5 +157,23 @@ NTSTATUS PortableExecutable::ResolveImports() noexcept
 				return STATUS_NOT_FOUND;
 		}
 	};
+	return STATUS_SUCCESS;
+}
+
+NTSTATUS PortableExecutable::ExecuteTLSCallbacks() noexcept
+{
+	const auto pDOSHeader = GetRVA<const IMAGE_DOS_HEADER>(0);
+	const auto pNTHeaders = GetRVA<const IMAGE_NT_HEADERS>(pDOSHeader->e_lfanew);
+	const auto& tlsDir = pNTHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS];
+	if (tlsDir.VirtualAddress == 0)
+		return STATUS_SUCCESS;
+	const auto pTLSDir = GetRVA<IMAGE_TLS_DIRECTORY>(tlsDir.VirtualAddress);
+	// loop through callbacks
+	auto pTLSCallback = reinterpret_cast<PIMAGE_TLS_CALLBACK*>(pTLSDir->AddressOfCallBacks);
+	if (pTLSCallback == nullptr)
+		return STATUS_SUCCESS;
+	for (auto pTLSCallback = reinterpret_cast<PIMAGE_TLS_CALLBACK*>(pTLSDir->AddressOfCallBacks);
+		*pTLSCallback != nullptr; ++pTLSCallback)
+		(*pTLSCallback)(m_image.get(), DLL_PROCESS_ATTACH, nullptr);
 	return STATUS_SUCCESS;
 }
