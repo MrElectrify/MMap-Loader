@@ -36,7 +36,6 @@ std::optional<std::variant<DWORD, NTSTATUS>> PortableExecutable::Load(const std:
 	const auto hNtDll = GetModuleHandle("ntdll");
 	if (hNtDll == nullptr)
 		return GetLastError();
-	using NtClose_t = std::add_pointer_t<decltype(NtClose)>;
 	using NtCreateSection_t = std::add_pointer_t <NTSTATUS NTAPI(PHANDLE SectionHandle,
 		ACCESS_MASK DesiredAccess, POBJECT_ATTRIBUTES ObjectAttributes,
 		PLARGE_INTEGER MaximumSize, ULONG SectionPageProtection,
@@ -47,8 +46,6 @@ std::optional<std::variant<DWORD, NTSTATUS>> PortableExecutable::Load(const std:
 		ULONG AllocationType, ULONG Protect)>;
 	using NtUnmapViewOfSection_t = std::add_pointer_t<NTSTATUS NTAPI(HANDLE ProcessHandle,
 		PVOID BaseAddress)>;
-	const NtClose_t NtClose_f = reinterpret_cast<NtClose_t>(
-		GetProcAddress(hNtDll, "NtClose"));
 	const NtCreateSection_t NtCreateSection_f = reinterpret_cast<NtCreateSection_t>(
 		GetProcAddress(hNtDll, "NtCreateSection"));
 	const NtMapViewOfSection_t NtMapViewOfSection_f = reinterpret_cast<NtMapViewOfSection_t>(
@@ -56,8 +53,8 @@ std::optional<std::variant<DWORD, NTSTATUS>> PortableExecutable::Load(const std:
 	const NtUnmapViewOfSection_t NtUnmapViewOfSection_f = 
 		reinterpret_cast<NtUnmapViewOfSection_t>(
 			GetProcAddress(hNtDll, "NtUnmapViewOfSection"));
-	if (NtClose_f == nullptr || NtCreateSection_f == nullptr || 
-		NtMapViewOfSection_f == nullptr || NtUnmapViewOfSection_f == nullptr)
+	if (NtCreateSection_f == nullptr || NtMapViewOfSection_f == nullptr || 
+		NtUnmapViewOfSection_f == nullptr)
 		return GetLastError();
 	// open the file for execution
 	OBJECT_ATTRIBUTES localObjectAttributes;
@@ -75,7 +72,7 @@ std::optional<std::variant<DWORD, NTSTATUS>> PortableExecutable::Load(const std:
 		fileHandle.get()); status != STATUS_SUCCESS)
 		return status;
 	std::shared_ptr<std::remove_pointer_t<HANDLE>>
-		sectionHandle(sectionHandleRaw, NtClose_f);
+		sectionHandle(sectionHandleRaw, CloseHandle);
 	// map the section
 	SIZE_T viewSize = 0;
 	PVOID imageBase = nullptr;
