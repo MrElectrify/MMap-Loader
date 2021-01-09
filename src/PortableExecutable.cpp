@@ -74,9 +74,13 @@ std::optional<std::variant<DWORD, NTSTATUS>> PortableExecutable::Load(const std:
 	PVOID imageBase = nullptr;
 	if (NTSTATUS status = NtMapViewOfSection_f(sectionHandle.get(),
 		GetCurrentProcess(), &imageBase, 0, 0, nullptr, &viewSize,
-		SECTION_INHERIT::ViewUnmap, 0, PAGE_EXECUTE_READWRITE);
+		SECTION_INHERIT::ViewUnmap, 0, PAGE_READONLY);
 		status != STATUS_SUCCESS)
 		return status;
+	DWORD dwOldProtect = 0;
+	// temporary. figure out how to separate sections and give them their own protections
+	if (VirtualProtect(imageBase, viewSize, PAGE_EXECUTE_READWRITE, &dwOldProtect) == FALSE)
+		return GetLastError();
 	// save the view to be unmapped
 	m_image = std::shared_ptr<void>(imageBase, 
 		[NtUnmapViewOfSection_f, sectionHandle](void* imageBase) 
