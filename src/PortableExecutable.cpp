@@ -53,7 +53,6 @@ std::optional<std::variant<DWORD, NTSTATUS>> PortableExecutable::Load(const std:
 		NtUnmapViewOfSection_f == nullptr)
 		return GetLastError();
 	// open the file for execution
-	OBJECT_ATTRIBUTES localObjectAttributes;
 	HANDLE fileHandleRaw = nullptr;
 	if (fileHandleRaw = CreateFile(path.c_str(), SYNCHRONIZE | FILE_EXECUTE, 
 		NULL, nullptr, OPEN_EXISTING, NULL, nullptr); fileHandleRaw == INVALID_HANDLE_VALUE)
