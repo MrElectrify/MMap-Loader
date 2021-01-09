@@ -1,6 +1,7 @@
 #include <MMapLoader/PortableExecutable.h>
 
 #include <fstream>
+#include <iostream>
 #include <type_traits>
 
 #include <ntstatus.h>
@@ -49,8 +50,8 @@ int PortableExecutable::Run() noexcept
 {
 	if (m_image == nullptr)
 		return -1;
-	auto EntryPoint_f = GetRVA<void()>(m_ntHeaders.OptionalHeader.AddressOfEntryPoint);
-	EntryPoint_f();
+	auto EntryPoint_f = GetRVA<int()>(m_ntHeaders.OptionalHeader.AddressOfEntryPoint);
+	return EntryPoint_f();
 }
 
 NTSTATUS PortableExecutable::LoadHeaders() noexcept
@@ -118,20 +119,30 @@ NTSTATUS PortableExecutable::ResolveImports() noexcept
 	auto pImportDesc = GetRVA<IMAGE_IMPORT_DESCRIPTOR>(importDir.VirtualAddress);
 	for (; pImportDesc->Name != 0; ++pImportDesc)
 	{
+		LPSTR libName = GetRVA<std::remove_pointer_t<LPSTR>>(pImportDesc->Name);
 		// load the imported DLL
-		HMODULE hLib = LoadLibraryA(GetRVA<CHAR>(pImportDesc->Name));
+		HMODULE hLib = LoadLibraryA(libName);
 		if (hLib == nullptr)
 			return STATUS_OBJECTID_NOT_FOUND;
 		// enumerate thunks and fill out import functions
-		for (auto pThunk = pImportDesc->OriginalFirstThunk != 0 ?
+		auto pLookup = pImportDesc->OriginalFirstThunk != 0 ?
 			GetRVA<IMAGE_THUNK_DATA>(pImportDesc->OriginalFirstThunk) :
 			GetRVA<IMAGE_THUNK_DATA>(pImportDesc->FirstThunk);
-			pThunk->u1.AddressOfData != 0; ++pThunk)
+		auto pThunk = GetRVA<IMAGE_THUNK_DATA>(pImportDesc->FirstThunk);
+		for (;pThunk->u1.AddressOfData != 0; ++pThunk, ++pLookup)
 		{
-			pThunk->u1.Function = reinterpret_cast<ULONGLONG>(
-				GetProcAddress(hLib, (pThunk->u1.Ordinal & IMAGE_ORDINAL_FLAG) ?
-					reinterpret_cast<LPCSTR>(pThunk->u1.Ordinal & 0xffff) :
-					GetRVA<IMAGE_IMPORT_BY_NAME>(pThunk->u1.AddressOfData)->Name));
+			LPCSTR procName = (pThunk->u1.Ordinal & IMAGE_ORDINAL_FLAG) ?
+				reinterpret_cast<LPCSTR>(pThunk->u1.Ordinal & 0xffff) :
+				GetRVA<IMAGE_IMPORT_BY_NAME>(pThunk->u1.AddressOfData)->Name;
+			LPVOID function = GetProcAddress(hLib, procName);
+			std::cout << "Resolved " << libName << ':';
+			if (pThunk->u1.Ordinal & IMAGE_ORDINAL_FLAG)
+				std::cout << reinterpret_cast<uint32_t>(procName);
+			else
+				std::cout << procName;
+			std::cout << " to " << function << '\n';
+			// set the First thunk's function
+			pThunk->u1.Function = reinterpret_cast<ULONGLONG>(function);
 			if (pThunk->u1.Function == 0)
 				return STATUS_NOT_FOUND;
 		}
