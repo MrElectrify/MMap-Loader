@@ -332,6 +332,18 @@ NTSTATUS PortableExecutable::EnableExceptions() noexcept
 	if (RtlAddFunctionTable(pExceptTbl, excDir.Size / sizeof(IMAGE_RUNTIME_FUNCTION_ENTRY), 
 		reinterpret_cast<DWORD64>(m_image.get())) == FALSE)
 		return STATUS_ACPI_FATAL;
+	// add it to the inverted function table too.
+	// this lets GetModuleHandleEx find us with a code ptr
+	// and will also allow us to add SEH in the future
+	using RtlInsertInvertedFunctionTable_t = std::add_pointer_t<void NTAPI(
+		IMAGE_DOS_HEADER* pImage, DWORD ImageSize)>;
+	static const RtlInsertInvertedFunctionTable_t RtlInsertInvertedFunctionTable_f =
+		Util::FindPatternIndirect<RtlInsertInvertedFunctionTable_t>(GetModuleHandle("ntdll"),
+			"\xE8\x00\x00\x00\x00\x41\x09\x5E\x68", 1);
+	if (RtlInsertInvertedFunctionTable_f == nullptr)
+		return STATUS_ACPI_FATAL;
+	RtlInsertInvertedFunctionTable_f(GetRVA<IMAGE_DOS_HEADER>(0), 
+		m_ntHeaders.OptionalHeader.SizeOfImage);
 	return STATUS_SUCCESS;
 }
 

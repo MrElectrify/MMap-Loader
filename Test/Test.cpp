@@ -7,7 +7,7 @@
 
 int main()
 {
-	constexpr const std::string_view gameStr = "C:\\Users\\Andrew\\source\\repos\\Project1\\x64\\Debug\\Project1.exe";
+	constexpr const std::string_view gameStr = "C:\\Users\\Andrew\\source\\repos\\BFBlazeEmulator\\out\\build\\x64-Release-Debug\\BFBlazeEmulator\\BFBlazeEmulator.exe";
 	const std::filesystem::path exePath(gameStr);
 	// set the GAME_DATA_DIR variable
 	if (SetEnvironmentVariableA("GAME_DATA_DIR",
