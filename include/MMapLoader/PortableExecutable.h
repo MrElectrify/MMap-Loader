@@ -5,6 +5,9 @@
 /// PortableExecutable
 /// 1/7/21 17:36
 
+// MMapLoader includes
+#include <MMapLoader/NtStructs.h>
+
 // STL includes
 #include <fstream>
 #include <functional>
@@ -39,12 +42,35 @@ namespace MMapLoader
 		/// @return The return code of the entry point
 		int Run() noexcept;
 	private:
+		/// @brief Allocates memory for the image
+		/// @return The status code
+		DWORD AllocImage() noexcept;
+		/// @brief Loads NT Headers from the pe file
+		/// @return The status code
+		NTSTATUS LoadHeaders() noexcept;
+		/// @brief Loads sections from the pe file
+		/// @return The status code
+		std::optional<std::variant<DWORD, NTSTATUS>> LoadSections() noexcept;
+		/// @brief Process the executable's relocations
+		/// @return The status code
+		NTSTATUS ProcessRelocations() noexcept;
 		/// @brief Resolve the executable's imports
 		/// @return The status code
-		NTSTATUS ResolveImports() noexcept;
+		std::optional<std::variant<DWORD, NTSTATUS>> ResolveImports() noexcept;
+		/// @brief Initializes Thread-Local Storage
+		/// @return The status code
+		NTSTATUS InitTLS() noexcept;
+		/// @brief Adds the static TLS entry
+		/// @return The status code
+		NTSTATUS AddStaticTLSEntry() noexcept;
 		/// @brief Executes TLS callbacks
 		/// @return The status code
 		NTSTATUS ExecuteTLSCallbacks() noexcept;
+
+		/// @brief Generates protection flags from a section's flags
+		/// @param sectionFlags The section's flags
+		/// @return The protection flags
+		static DWORD SectionFlagsToProtectionFlags(DWORD sectionFlags) noexcept;
 
 		/// @brief Gets a structure at an RVA offset
 		/// @tparam T The type to get
@@ -56,6 +82,13 @@ namespace MMapLoader
 			return reinterpret_cast<T*>(
 				reinterpret_cast<uintptr_t>(m_image.get()) + offset);
 		}
+
+		std::ifstream m_peFile;
+
+		IMAGE_DOS_HEADER m_dosHeader;
+		IMAGE_NT_HEADERS m_ntHeaders;
+		std::vector<IMAGE_SECTION_HEADER> m_sectionHeaders;
+		_LDR_DATA_TABLE_ENTRY_BASE64 m_loaderEntry{};
 
 		std::shared_ptr<void> m_image;
 	};
