@@ -61,7 +61,7 @@ std::optional<std::variant<DWORD, NTSTATUS>> PortableExecutable::Load(const std:
 BOOL PortableExecutable::Run() noexcept
 {
 	if (m_image.get() == nullptr)
-		return -1;
+		return FALSE;
 	// call it as a DLL even though it might not be
 	auto EntryPoint_f = GetRVA<BOOL WINAPI(PVOID, DWORD, LPVOID)>(
 		m_ntHeaders.OptionalHeader.AddressOfEntryPoint);
