@@ -1,5 +1,6 @@
 #include <MMapLoader/PortableExecutable.h>
-#include <MMapLoader/Util.h>
+
+#include <MMapLoader/Detail/NtFuncs.h>
 
 #include <filesystem>
 #include <fstream>
@@ -9,27 +10,15 @@
 #include <ntstatus.h>
 #include <winternl.h>
 
-typedef struct _RTLP_CURDIR_REF
-{
-	LONG RefCount;
-	HANDLE Handle;
-} RTLP_CURDIR_REF, * PRTLP_CURDIR_REF;
-
-typedef struct RTL_RELATIVE_NAME_U {
-	UNICODE_STRING RelativeName;
-	HANDLE ContainingDirectory;
-	PRTLP_CURDIR_REF CurDirRef;
-} RTL_RELATIVE_NAME_U, * PRTL_RELATIVE_NAME_U;
-
-typedef enum _SECTION_INHERIT {
-	ViewShare = 1,
-	ViewUnmap = 2
-} SECTION_INHERIT, * PSECTION_INHERIT;
-
 using MMapLoader::PortableExecutable;
+
+using namespace MMapLoader::Detail;
 
 std::optional<std::variant<DWORD, NTSTATUS>> PortableExecutable::Load(const std::string& path) noexcept
 {
+	// initialize NT
+	if (Detail::NT::Initialize() == false)
+		return STATUS_ACPI_FATAL;
 	// map the file
 	if (NTSTATUS status = MapFile(path);
 		status != STATUS_SUCCESS)
@@ -79,27 +68,6 @@ int PortableExecutable::Run() noexcept
 
 NTSTATUS PortableExecutable::MapFile(const std::string& path) noexcept
 {
-	// first, resolve ntdll functions
-	using NtCreateSection_t = std::add_pointer_t <NTSTATUS NTAPI(PHANDLE SectionHandle,
-		ACCESS_MASK DesiredAccess, POBJECT_ATTRIBUTES ObjectAttributes,
-		PLARGE_INTEGER MaximumSize, ULONG SectionPageProtection,
-		ULONG AllocationAttributes, HANDLE FileHandle)>;
-	using NtMapViewOfSection_t = std::add_pointer_t<NTSTATUS NTAPI(HANDLE SectionHandle,
-		HANDLE ProcessHandle, PVOID* BaseAddress, ULONG_PTR ZeroBits, SIZE_T CommitSize,
-		PLARGE_INTEGER SectionOffset, PSIZE_T ViewSize, SECTION_INHERIT InheritDisposition,
-		ULONG AllocationType, ULONG Protect)>;
-	using NtUnmapViewOfSection_t = std::add_pointer_t<NTSTATUS NTAPI(HANDLE ProcessHandle,
-		PVOID BaseAddress)>;
-	const static NtCreateSection_t NtCreateSection_f = reinterpret_cast<NtCreateSection_t>(
-		GetProcAddress(GetModuleHandle("ntdll"), "NtCreateSection"));
-	const static NtMapViewOfSection_t NtMapViewOfSection_f = reinterpret_cast<NtMapViewOfSection_t>(
-		GetProcAddress(GetModuleHandle("ntdll"), "NtMapViewOfSection"));
-	const static NtUnmapViewOfSection_t NtUnmapViewOfSection_f =
-		reinterpret_cast<NtUnmapViewOfSection_t>(
-			GetProcAddress(GetModuleHandle("ntdll"), "NtUnmapViewOfSection"));
-	if (NtCreateSection_f == nullptr || NtMapViewOfSection_f == nullptr ||
-		NtUnmapViewOfSection_f == nullptr)
-		return GetLastError();
 	// open the file for execution
 	HANDLE fileHandleRaw = nullptr;
 	if (fileHandleRaw = CreateFile(path.c_str(), SYNCHRONIZE | FILE_EXECUTE,
@@ -110,7 +78,7 @@ NTSTATUS PortableExecutable::MapFile(const std::string& path) noexcept
 		fileHandle(fileHandleRaw, CloseHandle);
 	// now we can create a section
 	HANDLE sectionHandleRaw = nullptr;
-	if (NTSTATUS status = NtCreateSection_f(&sectionHandleRaw,
+	if (NTSTATUS status = NT::NtCreateSection_f(&sectionHandleRaw,
 		SECTION_ALL_ACCESS, nullptr, nullptr, PAGE_EXECUTE, SEC_IMAGE,
 		fileHandle.get()); status != STATUS_SUCCESS)
 		return status;
@@ -119,9 +87,9 @@ NTSTATUS PortableExecutable::MapFile(const std::string& path) noexcept
 	// map the section
 	SIZE_T viewSize = 0;
 	PVOID imageBase = nullptr;
-	if (NTSTATUS status = NtMapViewOfSection_f(sectionHandle.get(),
+	if (NTSTATUS status = NT::NtMapViewOfSection_f(sectionHandle.get(),
 		GetCurrentProcess(), &imageBase, 0, 0, nullptr, &viewSize,
-		SECTION_INHERIT::ViewUnmap, 0, PAGE_READWRITE);
+		NT::SECTION_INHERIT::ViewUnmap, 0, PAGE_READWRITE);
 		status != STATUS_SUCCESS)
 		return status;
 	DWORD dwOldProtect = 0;
@@ -131,7 +99,7 @@ NTSTATUS PortableExecutable::MapFile(const std::string& path) noexcept
 		{
 			// this is a lambda so that the section is closed after
 			// the section is unmapped
-			NtUnmapViewOfSection_f(GetCurrentProcess(), imageBase);
+			NT::NtUnmapViewOfSection_f(GetCurrentProcess(), imageBase);
 		});
 	std::filesystem::path fPath(path);
 	m_modPath = fPath.wstring();
@@ -250,25 +218,14 @@ NTSTATUS PortableExecutable::InitTLS() noexcept
 
 NTSTATUS PortableExecutable::InitLoaderEntry() noexcept
 {
-	using LdrpInsertModuleToIndex_t = std::add_pointer_t<DWORD NTAPI(
-		_LDR_DATA_TABLE_ENTRY64* pTblEntry, IMAGE_NT_HEADERS* pNTHeaders)>;
-	using RtlInitUnicodeString_t = std::add_pointer_t<decltype(RtlInitUnicodeString)>;
-	const static LdrpInsertModuleToIndex_t LdrpInsertModuleToIndex_f =
-		Util::FindPatternIndirect<LdrpInsertModuleToIndex_t>(GetModuleHandle("ntdll"),
-			"\xE8\x00\x00\x00\x00\x45\x33\xC9\x33\xD2", 1);
-	const static RtlInitUnicodeString_t RtlInitUnicodeString_f =
-		reinterpret_cast<RtlInitUnicodeString_t>(GetProcAddress(GetModuleHandle("ntdll"),
-			"RtlInitUnicodeString"));
-	if (LdrpInsertModuleToIndex_f == nullptr || RtlInitUnicodeString_f == nullptr)
-		return STATUS_ACPI_FATAL;
 	m_loaderEntry.DllBase = reinterpret_cast<uint64_t>(m_image.get());
-	RtlInitUnicodeString_f(&m_loaderEntry.BaseDllName, m_modName.c_str());
-	RtlInitUnicodeString_f(&m_loaderEntry.FullDllName, m_modPath.c_str());
+	NT::RtlInitUnicodeString_f(&m_loaderEntry.BaseDllName, m_modName.c_str());
+	NT::RtlInitUnicodeString_f(&m_loaderEntry.FullDllName, m_modPath.c_str());
 	m_loaderEntry.DdagNode = reinterpret_cast<uint64_t>(&m_ddagNode);
-	m_ddagNode.State = _LDR_DDAG_STATE::LdrModulesReadyToRun;
+	m_ddagNode.State = NT::_LDR_DDAG_STATE::LdrModulesReadyToRun;
 	m_ddagNode.LoadCount = -1;
 	// initialize the index
-	if (DWORD index = LdrpInsertModuleToIndex_f(&m_loaderEntry,
+	if (DWORD index = NT::LdrpInsertModuleToIndex_f(&m_loaderEntry,
 		GetRVA<IMAGE_NT_HEADERS>(m_dosHeader.e_lfanew));
 		index == 0)
 		return STATUS_ACPI_FATAL;
@@ -277,15 +234,7 @@ NTSTATUS PortableExecutable::InitLoaderEntry() noexcept
 
 NTSTATUS PortableExecutable::AddStaticTLSEntry() noexcept
 {
-	using LdrpHandleTlsData_t = std::add_pointer_t<NTSTATUS NTAPI(
-		_LDR_DATA_TABLE_ENTRY64* pLdrDataTable)>;
-	static const LdrpHandleTlsData_t LdrpHandleTlsData_f =
-		reinterpret_cast<LdrpHandleTlsData_t>(Util::FindPatternIndirect(
-			GetModuleHandle("ntdll"), 
-			"\xE8\x00\x00\x00\x00\x8B\xD8\x85\xC0\x78\x0B\xE8\x00\x00\x00\x00", 1));
-	if (LdrpHandleTlsData_f == nullptr)
-		return STATUS_ACPI_FATAL;
-	if (NTSTATUS status = LdrpHandleTlsData_f(&m_loaderEntry);
+	if (NTSTATUS status = NT::LdrpHandleTlsData_f(&m_loaderEntry);
 		status != STATUS_SUCCESS)
 		return status;
 	return STATUS_SUCCESS;
@@ -310,14 +259,7 @@ NTSTATUS PortableExecutable::ExecuteTLSCallbacks() noexcept
 NTSTATUS PortableExecutable::AddEntryToLdrHashTbl() noexcept
 {
 	// todo: remove the entry
-	using LdrpInsertDataTableEntry_t = 
-		std::add_pointer_t<void __fastcall(_LDR_DATA_TABLE_ENTRY64* pEntry)>;
-	const static LdrpInsertDataTableEntry_t LdrpInsertDataTableEntry_f =
-		Util::FindPatternIndirect<LdrpInsertDataTableEntry_t>(GetModuleHandle("ntdll"),
-			"\xE8\x00\x00\x00\x00\x48\x8B\xD5\x48\x8B\xCF", 1);
-	if (LdrpInsertDataTableEntry_f == nullptr)
-		return STATUS_ACPI_FATAL;
-	LdrpInsertDataTableEntry_f(&m_loaderEntry);
+	NT::LdrpInsertDataTableEntry_f(&m_loaderEntry);
 	return STATUS_SUCCESS;
 }
 
@@ -335,14 +277,7 @@ NTSTATUS PortableExecutable::EnableExceptions() noexcept
 	// add it to the inverted function table too.
 	// this lets GetModuleHandleEx find us with a code ptr
 	// and will also allow us to add SEH in the future
-	using RtlInsertInvertedFunctionTable_t = std::add_pointer_t<void NTAPI(
-		IMAGE_DOS_HEADER* pImage, DWORD ImageSize)>;
-	static const RtlInsertInvertedFunctionTable_t RtlInsertInvertedFunctionTable_f =
-		Util::FindPatternIndirect<RtlInsertInvertedFunctionTable_t>(GetModuleHandle("ntdll"),
-			"\xE8\x00\x00\x00\x00\x41\x09\x5E\x68", 1);
-	if (RtlInsertInvertedFunctionTable_f == nullptr)
-		return STATUS_ACPI_FATAL;
-	RtlInsertInvertedFunctionTable_f(GetRVA<IMAGE_DOS_HEADER>(0), 
+	NT::RtlInsertInvertedFunctionTable_f(GetRVA<IMAGE_DOS_HEADER>(0), 
 		m_ntHeaders.OptionalHeader.SizeOfImage);
 	return STATUS_SUCCESS;
 }

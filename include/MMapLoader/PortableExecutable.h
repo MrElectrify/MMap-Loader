@@ -6,7 +6,7 @@
 /// 1/7/21 17:36
 
 // MMapLoader includes
-#include <MMapLoader/NtStructs.h>
+#include <MMapLoader/Detail/NtStructs.h>
 
 // STL includes
 #include <fstream>
@@ -93,8 +93,8 @@ namespace MMapLoader
 				reinterpret_cast<uintptr_t>(m_image.get()) + offset);
 		}
 
-		_LDR_DATA_TABLE_ENTRY64 m_loaderEntry{};
-		_LDR_DDAG_NODE64 m_ddagNode{};
+		Detail::NT::_LDR_DATA_TABLE_ENTRY64 m_loaderEntry{};
+		Detail::NT::_LDR_DDAG_NODE64 m_ddagNode{};
 
 		std::wstring m_modPath;
 		std::wstring m_modName;

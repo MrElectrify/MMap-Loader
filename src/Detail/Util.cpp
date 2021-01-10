@@ -1,6 +1,6 @@
-#include <MMapLoader/Util.h>
+#include <MMapLoader/Detail/Util.h>
 
-using namespace MMapLoader;
+using namespace MMapLoader::Detail;
 
 // Boyer-Moore-Horspool with wildcards implementation
 void FillShiftTable(const uint8_t* pPattern, size_t patternSize, uint8_t wildcard, size_t* bad_char_skip)
