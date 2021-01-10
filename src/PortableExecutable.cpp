@@ -1,6 +1,7 @@
 #include <MMapLoader/PortableExecutable.h>
 #include <MMapLoader/Util.h>
 
+#include <filesystem>
 #include <fstream>
 #include <memory>
 #include <type_traits>
@@ -45,12 +46,20 @@ std::optional<std::variant<DWORD, NTSTATUS>> PortableExecutable::Load(const std:
 	if (auto status = ResolveImports();
 		status.has_value() == true)
 		return status;
+	// initializes the loader entry
+	if (NTSTATUS status = InitLoaderEntry();
+		status != STATUS_SUCCESS)
+		return status;
 	// initialize static TLS data and execute callbacks
 	if (NTSTATUS status = InitTLS();
 		status != STATUS_SUCCESS)
 		return status;
 	// enable exceptions
 	if (NTSTATUS status = EnableExceptions();
+		status != STATUS_SUCCESS)
+		return status;
+	// add the entry to the loader hash table
+	if (NTSTATUS status = AddEntryToLdrHashTbl();
 		status != STATUS_SUCCESS)
 		return status;
 	// protect sections
@@ -71,9 +80,6 @@ int PortableExecutable::Run() noexcept
 NTSTATUS PortableExecutable::MapFile(const std::string& path) noexcept
 {
 	// first, resolve ntdll functions
-	const auto hNtDll = GetModuleHandle("ntdll");
-	if (hNtDll == nullptr)
-		return GetLastError();
 	using NtCreateSection_t = std::add_pointer_t <NTSTATUS NTAPI(PHANDLE SectionHandle,
 		ACCESS_MASK DesiredAccess, POBJECT_ATTRIBUTES ObjectAttributes,
 		PLARGE_INTEGER MaximumSize, ULONG SectionPageProtection,
@@ -85,12 +91,12 @@ NTSTATUS PortableExecutable::MapFile(const std::string& path) noexcept
 	using NtUnmapViewOfSection_t = std::add_pointer_t<NTSTATUS NTAPI(HANDLE ProcessHandle,
 		PVOID BaseAddress)>;
 	const static NtCreateSection_t NtCreateSection_f = reinterpret_cast<NtCreateSection_t>(
-		GetProcAddress(hNtDll, "NtCreateSection"));
+		GetProcAddress(GetModuleHandle("ntdll"), "NtCreateSection"));
 	const static NtMapViewOfSection_t NtMapViewOfSection_f = reinterpret_cast<NtMapViewOfSection_t>(
-		GetProcAddress(hNtDll, "NtMapViewOfSection"));
+		GetProcAddress(GetModuleHandle("ntdll"), "NtMapViewOfSection"));
 	const static NtUnmapViewOfSection_t NtUnmapViewOfSection_f =
 		reinterpret_cast<NtUnmapViewOfSection_t>(
-			GetProcAddress(hNtDll, "NtUnmapViewOfSection"));
+			GetProcAddress(GetModuleHandle("ntdll"), "NtUnmapViewOfSection"));
 	if (NtCreateSection_f == nullptr || NtMapViewOfSection_f == nullptr ||
 		NtUnmapViewOfSection_f == nullptr)
 		return GetLastError();
@@ -127,6 +133,9 @@ NTSTATUS PortableExecutable::MapFile(const std::string& path) noexcept
 			// the section is unmapped
 			NtUnmapViewOfSection_f(GetCurrentProcess(), imageBase);
 		});
+	std::filesystem::path fPath(path);
+	m_modPath = fPath.wstring();
+	m_modName = fPath.stem().wstring() + fPath.extension().wstring();
 	return STATUS_SUCCESS;
 }
 
@@ -239,17 +248,37 @@ NTSTATUS PortableExecutable::InitTLS() noexcept
 	return STATUS_SUCCESS;
 }
 
+NTSTATUS PortableExecutable::InitLoaderEntry() noexcept
+{
+	using RtlInitUnicodeString_t = std::add_pointer_t<decltype(RtlInitUnicodeString)>;
+	const static RtlInitUnicodeString_t RtlInitUnicodeString_f =
+		reinterpret_cast<RtlInitUnicodeString_t>(GetProcAddress(GetModuleHandle("ntdll"),
+			"RtlInitUnicodeString"));
+	if (RtlInitUnicodeString_f == nullptr)
+		return STATUS_ACPI_FATAL;
+	m_loaderEntry.DllBase = reinterpret_cast<uint64_t>(m_image.get());
+	m_loaderEntry.SizeOfImage = m_ntHeaders.OptionalHeader.SizeOfImage;
+	m_loaderEntry.EntryPoint = reinterpret_cast<uint64_t>(
+		GetRVA<void>(m_ntHeaders.OptionalHeader.AddressOfEntryPoint));
+	RtlInitUnicodeString_f(&m_loaderEntry.BaseDllName, m_modName.c_str());
+	RtlInitUnicodeString_f(&m_loaderEntry.FullDllName, m_modPath.c_str());
+	m_loaderEntry.ObseleteLoadCount = -1;
+	m_loaderEntry.DdagNode = reinterpret_cast<uint64_t>(&m_ddagNode);
+	m_ddagNode.State = _LDR_DDAG_STATE::LdrModulesReadyToRun;
+	m_ddagNode.LoadCount = -1;
+	return STATUS_SUCCESS;
+}
+
 NTSTATUS PortableExecutable::AddStaticTLSEntry() noexcept
 {
 	using LdrpHandleTlsData_t = std::add_pointer_t<NTSTATUS NTAPI(
-		_LDR_DATA_TABLE_ENTRY_BASE64* pLdrDataTable)>;
+		_LDR_DATA_TABLE_ENTRY64* pLdrDataTable)>;
 	static const LdrpHandleTlsData_t LdrpHandleTlsData_f =
 		reinterpret_cast<LdrpHandleTlsData_t>(Util::FindPatternIndirect(
 			GetModuleHandle("ntdll"), 
 			"\xE8\x00\x00\x00\x00\x8B\xD8\x85\xC0\x78\x0B\xE8\x00\x00\x00\x00", 1));
 	if (LdrpHandleTlsData_f == nullptr)
 		return STATUS_ACPI_FATAL;
-	m_loaderEntry.DllBase = reinterpret_cast<uint64_t>(m_image.get());
 	if (NTSTATUS status = LdrpHandleTlsData_f(&m_loaderEntry);
 		status != STATUS_SUCCESS)
 		return status;
@@ -269,6 +298,20 @@ NTSTATUS PortableExecutable::ExecuteTLSCallbacks() noexcept
 	for (auto pTLSCallback = reinterpret_cast<PIMAGE_TLS_CALLBACK*>(pTLSDir->AddressOfCallBacks);
 		*pTLSCallback != nullptr; ++pTLSCallback)
 		(*pTLSCallback)(m_image.get(), DLL_PROCESS_ATTACH, nullptr);
+	return STATUS_SUCCESS;
+}
+
+NTSTATUS PortableExecutable::AddEntryToLdrHashTbl() noexcept
+{
+	// todo: remove the entry
+	using LdrpInsertDataTableEntry_t = 
+		std::add_pointer_t<void __fastcall(_LDR_DATA_TABLE_ENTRY64* pEntry)>;
+	const static LdrpInsertDataTableEntry_t LdrpInsertDataTableEntry_f =
+		Util::FindPatternIndirect<LdrpInsertDataTableEntry_t>(GetModuleHandle("ntdll"),
+			"\xE8\x00\x00\x00\x00\x48\x8B\xD5\x48\x8B\xCF", 1);
+	if (LdrpInsertDataTableEntry_f == nullptr)
+		return STATUS_ACPI_FATAL;
+	LdrpInsertDataTableEntry_f(&m_loaderEntry);
 	return STATUS_SUCCESS;
 }
 

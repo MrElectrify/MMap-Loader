@@ -7,7 +7,7 @@
 
 int main()
 {
-	constexpr const std::string_view gameStr = "C:\\Program Files (x86)\\Origin Games\\Battlefield 4\\game.bin";
+	constexpr const std::string_view gameStr = "C:\\Users\\Andrew\\source\\repos\\Project1\\x64\\Debug\\Project1.exe";
 	const std::filesystem::path exePath(gameStr);
 	// set the GAME_DATA_DIR variable
 	if (SetEnvironmentVariableA("GAME_DATA_DIR",

@@ -61,12 +61,18 @@ namespace MMapLoader
 		/// @brief Initializes Thread-Local Storage
 		/// @return The status code
 		NTSTATUS InitTLS() noexcept;
+		/// @brief Initializes the loader entry
+		/// @return The status code
+		NTSTATUS InitLoaderEntry() noexcept;
 		/// @brief Adds the static TLS entry
 		/// @return The status code
 		NTSTATUS AddStaticTLSEntry() noexcept;
 		/// @brief Executes TLS callbacks
 		/// @return The status code
 		NTSTATUS ExecuteTLSCallbacks() noexcept;
+		/// @brief Adds the entry to the loader hash table
+		/// @return The status code
+		NTSTATUS AddEntryToLdrHashTbl() noexcept;
 		/// @brief Enable exception support. Only enables SEH for now
 		/// @return The status code
 		NTSTATUS EnableExceptions() noexcept;
@@ -87,7 +93,11 @@ namespace MMapLoader
 				reinterpret_cast<uintptr_t>(m_image.get()) + offset);
 		}
 
-		_LDR_DATA_TABLE_ENTRY_BASE64 m_loaderEntry{};
+		_LDR_DATA_TABLE_ENTRY64 m_loaderEntry{};
+		_LDR_DDAG_NODE64 m_ddagNode{};
+
+		std::wstring m_modPath;
+		std::wstring m_modName;
 
 		IMAGE_DOS_HEADER m_dosHeader;
 		IMAGE_NT_HEADERS m_ntHeaders;
