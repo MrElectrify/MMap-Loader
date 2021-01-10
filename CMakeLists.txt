@@ -14,4 +14,7 @@ elseif ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
    add_compile_options (-fcolor-diagnostics)
 endif ()
 
+include(cmake/CompilerWarnings.cmake)
+
 add_subdirectory(src)
+add_subdirectory(Test)

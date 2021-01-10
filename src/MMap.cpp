@@ -1,89 +1,96 @@
 #include <MMapLoader/MMap.h>
 
+#include <MMapLoader/PortableExecutable.h>
+
 #include <array>
-#include <fstream>
-#include <functional>
-#include <memory>
+#include <filesystem>
 #include <system_error>
-#include <type_traits>
+#include <vector>
 
-#include <ShlObj_core.h>
-#include <Windows.h>
-#include <winerror.h>
-
-const char* FormatStatus(NTSTATUS status)
+const char* FormatError(int error)
 {
 	static std::array<char, 256> buf;
-	const auto str = std::system_category().message(GetLastError());
-	strncpy(buf.data(), str.c_str(), str.size());
+	const auto str = std::system_category().message(error);
+	strncpy_s(buf.data(), buf.size(), str.c_str(), str.size());
 	return buf.data();
 }
 
-bool InjectInternal(HANDLE hProc, const std::string& path) noexcept
+const char* FormatNTStatus(NTSTATUS status)
 {
-	// allocate memory for the path length
-	std::unique_ptr<void, decltype(std::bind(VirtualFreeEx, hProc,
-		std::placeholders::_1, 0, MEM_DECOMMIT | MEM_RELEASE))>
-		pFuncName(VirtualAllocEx(hProc, nullptr, path.size() + 1,
-			MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE), std::bind(VirtualFreeEx,
-				hProc, std::placeholders::_1, 0, MEM_DECOMMIT | MEM_RELEASE));
-	if (pFuncName == nullptr)
-		return false;
-	// write the path
-	if (WriteProcessMemory(hProc, pFuncName.get(), path.c_str(),
-		path.size(), nullptr) == FALSE)
-		return false;
-	// loadLibraryA
-	DWORD exitCode;
-	for (size_t i = 0; i < 3; ++i)
+	static std::array<char, 256> buf;
+	static const auto ntHandle = LoadLibraryW(L"ntdll.dll");
+	if (FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_FROM_HMODULE,
+		ntHandle, status, 0, buf.data(), static_cast<DWORD>(buf.size()), nullptr) == 0)
 	{
-		std::unique_ptr<void, std::add_pointer_t<decltype(CloseHandle)>>
-			hThread(CreateRemoteThread(hProc, nullptr, 0,
-				reinterpret_cast<LPTHREAD_START_ROUTINE>(&LoadLibraryA),
-				pFuncName.get(), NULL, nullptr), CloseHandle);
-		if (hThread == nullptr)
-			return false;
-		if (WaitForSingleObject(hThread.get(), INFINITE) != WAIT_OBJECT_0)
-			return false;
-		if (GetExitCodeThread(hThread.get(), &exitCode) == FALSE)
-			return false;
-		if (exitCode != 0)
-			break;
+		// yikes, we even failed this.
+		const auto str = std::system_category().message(GetLastError());
+		strncpy_s(buf.data(), buf.size(), str.c_str(), str.size());
 	}
-	return exitCode != 0;
+	return buf.data();
 }
 
-void Inject(HANDLE hProc, void* buffer, size_t len, Result* pResult)
+void Run(const char* exePathStr, size_t exePathLen, const char** dllPaths, 
+	size_t* dllBufLens, size_t numDlls, Result* result)
 {
-	// save the file to %appdata%
-	PWSTR str;
-	if (SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &str) != S_OK)
+	std::filesystem::path exePath(std::string_view(exePathStr, exePathLen));
+	// set the current directory to the root of the exe
+	const auto oldWorkingDirectory = std::filesystem::current_path();
+	std::error_code ec;
+	std::filesystem::current_path(exePath.parent_path(), ec);
+	if (ec)
 	{
-		CoTaskMemFree(str);
-		pResult->status = GetLastError();
-		pResult->statusStr = FormatStatus(pResult->status);
+		result->status = ec.value();
+		static std::array<char, 256> buf;
+		const auto str = ec.message();
+		strncpy_s(buf.data(), buf.size(), str.c_str(), str.size());
+		result->statusStr = buf.data();
+		result->success = false;
 		return;
 	}
-	std::wstring_view pathView(str);
-	std::string path(pathView.begin(), pathView.end());
-	CoTaskMemFree(str);
-	path += "\\warsawrevamped\\wr.dll";
-	path.push_back('\0');
-	std::ofstream outFile(path, std::ios_base::binary);
-	if (outFile.good() == false)
+	MMapLoader::PortableExecutable executable;
+	if (auto status = executable.Load(std::string(exePathStr, exePathLen));
+		status.has_value() == true)
 	{
-		pResult->status = 2;
-		pResult->statusStr = FormatStatus(pResult->status);
+		result->success = false;
+		switch (status->index())
+		{
+		case 0:
+			result->status = std::get<DWORD>(status.value());
+			result->statusStr = FormatError(result->status);
+			break;
+		case 1:
+			result->status = std::get<NTSTATUS>(status.value());
+			result->statusStr = FormatNTStatus(result->status);
+			break;
+		}
 		return;
 	}
-	outFile.write(reinterpret_cast<const char*>(buffer), len);
-	outFile.close();
-	if (InjectInternal(hProc, path) == false)
+	std::vector<MMapLoader::PortableExecutable> dlls;
+	// load all DLLs
+	for (size_t i = 0; i < numDlls; ++i)
 	{
-		pResult->status = GetLastError();
-		pResult->statusStr = FormatStatus(pResult->status);
-		pResult->success = false;
-		return;
+		MMapLoader::PortableExecutable dll;
+		if (auto status = dll.Load(std::string(dllPaths[i], dllBufLens[i]));
+			status.has_value() == true)
+		{
+			result->success = false;
+			switch (status->index())
+			{
+			case 0:
+				result->status = std::get<DWORD>(status.value());
+				result->statusStr = FormatError(result->status);
+				break;
+			case 1:
+				result->status = std::get<NTSTATUS>(status.value());
+				result->statusStr = FormatNTStatus(result->status);
+				break;
+			}
+			return;
+		}
+		// call DllMain
+		if (dll.Run() == TRUE)
+			dlls.push_back(std::move(dll));
 	}
-	pResult->success = true;
+	executable.Run();
+	result->success = true;
 }
