@@ -117,7 +117,7 @@ std::optional<std::variant<DWORD, NTSTATUS>> PortableExecutable::LoadSections() 
 	for (const auto& sectionHeader : m_sectionHeaders)
 	{
 		// check size to ensure no buffer overrun
-		if (sectionHeader.VirtualAddress + sectionHeader.Misc.VirtualSize >=
+		if (sectionHeader.VirtualAddress + sectionHeader.Misc.VirtualSize >
 			m_ntHeaders.OptionalHeader.SizeOfImage)
 			return STATUS_SECTION_TOO_BIG;
 		const auto sectionAddr = GetRVA<char>(sectionHeader.VirtualAddress);
