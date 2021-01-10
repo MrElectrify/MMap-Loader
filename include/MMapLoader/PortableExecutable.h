@@ -66,6 +66,9 @@ namespace MMapLoader
 		/// @brief Executes TLS callbacks
 		/// @return The status code
 		NTSTATUS ExecuteTLSCallbacks() noexcept;
+		/// @brief Frees discardable sections
+		/// @return The status code
+		DWORD FreeDiscardableSections() noexcept;
 
 		/// @brief Generates protection flags from a section's flags
 		/// @param sectionFlags The section's flags

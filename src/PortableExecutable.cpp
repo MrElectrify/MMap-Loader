@@ -38,8 +38,12 @@ std::optional<std::variant<DWORD, NTSTATUS>> PortableExecutable::Load(const std:
 		status.has_value() == true)
 		return status;
 	// initialize static TLS data and execute callbacks
-	if (NTSTATUS status = InitTLS(); 
+	if (NTSTATUS status = InitTLS();
 		status != STATUS_SUCCESS)
+		return status;
+	// free discardable sections
+	if (DWORD status = FreeDiscardableSections();
+		status != ERROR_SUCCESS)
 		return status;
 	return std::nullopt;
 }
@@ -49,12 +53,20 @@ DWORD PortableExecutable::AllocImage() noexcept
 	// first allocate the image as READWRITE
 	const LPVOID pMem = VirtualAlloc(
 		reinterpret_cast<LPVOID>(m_ntHeaders.OptionalHeader.ImageBase),
-		m_ntHeaders.OptionalHeader.SizeOfImage, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+		m_ntHeaders.OptionalHeader.SizeOfImage, MEM_RESERVE, PAGE_NOACCESS);
 	if (pMem == nullptr)
 		return GetLastError();
 	m_image = std::shared_ptr<void>(pMem,
 		std::bind(VirtualFree, std::placeholders::_1,
 			m_ntHeaders.OptionalHeader.SizeOfImage, MEM_DECOMMIT | MEM_RELEASE));
+	// commit the headers and read them in
+	if (VirtualAlloc(m_image.get(), m_ntHeaders.OptionalHeader.SizeOfHeaders,
+		MEM_COMMIT, PAGE_READWRITE) == nullptr)
+		return GetLastError();
+	if (m_peFile.seekg(0, SEEK_SET).fail() == true ||
+		m_peFile.read(reinterpret_cast<char*>(m_image.get()),
+			m_ntHeaders.OptionalHeader.SizeOfHeaders).fail() == true)
+		return ERROR_FILE_CORRUPT;
 	return ERROR_SUCCESS;
 }
 
@@ -63,15 +75,7 @@ int PortableExecutable::Run() noexcept
 	if (m_image.get() == nullptr)
 		return -1;
 	auto EntryPoint_f = GetRVA<int()>(m_ntHeaders.OptionalHeader.AddressOfEntryPoint);
-	auto hThread = CreateThread(nullptr, 0, reinterpret_cast<LPTHREAD_START_ROUTINE>(EntryPoint_f),
-		nullptr, 0, nullptr);
-	if (hThread == nullptr)
-		return GetLastError();
-	WaitForSingleObject(hThread, INFINITE);
-	DWORD exitCode = 0;
-	if (GetExitCodeThread(hThread, &exitCode) == FALSE)
-		return GetLastError();
-	return exitCode;
+	return EntryPoint_f();
 }
 
 NTSTATUS PortableExecutable::LoadHeaders() noexcept
@@ -114,6 +118,10 @@ std::optional<std::variant<DWORD, NTSTATUS>> PortableExecutable::LoadSections() 
 			m_ntHeaders.OptionalHeader.SizeOfImage)
 			return STATUS_SECTION_TOO_BIG;
 		const auto sectionAddr = GetRVA<char>(sectionHeader.VirtualAddress);
+		// commit the memory
+		if (VirtualAlloc(sectionAddr, sectionHeader.SizeOfRawData, MEM_COMMIT,
+			PAGE_READWRITE) == nullptr)
+			return GetLastError();
 		// read the data to the section
 		if (m_peFile.seekg(sectionHeader.PointerToRawData).fail() == true ||
 			m_peFile.read(sectionAddr, sectionHeader.SizeOfRawData).fail() == true)
@@ -231,6 +239,21 @@ NTSTATUS PortableExecutable::ExecuteTLSCallbacks() noexcept
 		*pTLSCallback != nullptr; ++pTLSCallback)
 		(*pTLSCallback)(m_image.get(), DLL_PROCESS_ATTACH, nullptr);
 	return STATUS_SUCCESS;
+}
+
+DWORD PortableExecutable::FreeDiscardableSections() noexcept
+{
+	for (const auto& sectionHeader : m_sectionHeaders)
+	{
+		if (sectionHeader.Characteristics & IMAGE_SCN_MEM_DISCARDABLE)
+		{
+			// free the section
+			if (VirtualFree(GetRVA<void>(sectionHeader.PointerToRawData),
+				sectionHeader.SizeOfRawData, MEM_DECOMMIT) == FALSE)
+				return GetLastError();
+		}
+	}
+	return ERROR_SUCCESS;
 }
 
 DWORD PortableExecutable::SectionFlagsToProtectionFlags(DWORD sectionFlags) noexcept
