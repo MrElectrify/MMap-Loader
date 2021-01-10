@@ -114,12 +114,12 @@ std::optional<std::variant<DWORD, NTSTATUS>> PortableExecutable::LoadSections() 
 	for (const auto& sectionHeader : m_sectionHeaders)
 	{
 		// check size to ensure no buffer overrun
-		if (sectionHeader.VirtualAddress + sectionHeader.SizeOfRawData >=
+		if (sectionHeader.VirtualAddress + sectionHeader.Misc.VirtualSize >=
 			m_ntHeaders.OptionalHeader.SizeOfImage)
 			return STATUS_SECTION_TOO_BIG;
 		const auto sectionAddr = GetRVA<char>(sectionHeader.VirtualAddress);
 		// commit the memory
-		if (VirtualAlloc(sectionAddr, sectionHeader.SizeOfRawData, MEM_COMMIT,
+		if (VirtualAlloc(sectionAddr, sectionHeader.Misc.VirtualSize, MEM_COMMIT,
 			PAGE_READWRITE) == nullptr)
 			return GetLastError();
 		// read the data to the section
@@ -128,7 +128,7 @@ std::optional<std::variant<DWORD, NTSTATUS>> PortableExecutable::LoadSections() 
 			return STATUS_END_OF_FILE;
 		// change protection to the corresponding protection
 		DWORD oldProtect = 0;
-		if (VirtualProtect(sectionAddr, sectionHeader.SizeOfRawData,
+		if (VirtualProtect(sectionAddr, sectionHeader.Misc.VirtualSize,
 			SectionFlagsToProtectionFlags(sectionHeader.Characteristics),
 			&oldProtect) == FALSE)
 			return GetLastError();
