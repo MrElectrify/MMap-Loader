@@ -69,6 +69,9 @@ namespace MMapLoader
 		/// @brief Frees discardable sections
 		/// @return The status code
 		DWORD FreeDiscardableSections() noexcept;
+		/// @brief Enable exception support. Only enables SEH for now
+		/// @return The status code
+		NTSTATUS EnableExceptions() noexcept;
 
 		/// @brief Generates protection flags from a section's flags
 		/// @param sectionFlags The section's flags

@@ -45,6 +45,9 @@ std::optional<std::variant<DWORD, NTSTATUS>> PortableExecutable::Load(const std:
 	if (DWORD status = FreeDiscardableSections();
 		status != ERROR_SUCCESS)
 		return status;
+	if (NTSTATUS status = EnableExceptions();
+		status != STATUS_SUCCESS)
+		return status;
 	return std::nullopt;
 }
 
@@ -225,9 +228,7 @@ NTSTATUS PortableExecutable::AddStaticTLSEntry() noexcept
 
 NTSTATUS PortableExecutable::ExecuteTLSCallbacks() noexcept
 {
-	const auto pDOSHeader = GetRVA<const IMAGE_DOS_HEADER>(0);
-	const auto pNTHeaders = GetRVA<const IMAGE_NT_HEADERS>(pDOSHeader->e_lfanew);
-	const auto& tlsDir = pNTHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS];
+	const auto& tlsDir = m_ntHeaders.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS];
 	if (tlsDir.VirtualAddress == 0)
 		return STATUS_SUCCESS;
 	const auto pTLSDir = GetRVA<IMAGE_TLS_DIRECTORY>(tlsDir.VirtualAddress);
@@ -254,6 +255,20 @@ DWORD PortableExecutable::FreeDiscardableSections() noexcept
 		}
 	}
 	return ERROR_SUCCESS;
+}
+
+NTSTATUS PortableExecutable::EnableExceptions() noexcept
+{
+	const auto& excDir = 
+		m_ntHeaders.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION];
+	const auto pExceptTbl = GetRVA<IMAGE_RUNTIME_FUNCTION_ENTRY>(excDir.VirtualAddress);
+	// make sure there is an exception table
+	if (pExceptTbl == m_image.get())
+		return STATUS_SUCCESS;
+	if (RtlAddFunctionTable(pExceptTbl, excDir.Size / sizeof(IMAGE_RUNTIME_FUNCTION_ENTRY), 
+		reinterpret_cast<DWORD64>(m_image.get())) == FALSE)
+		return STATUS_ACPI_FATAL;
+	return STATUS_SUCCESS;
 }
 
 DWORD PortableExecutable::SectionFlagsToProtectionFlags(DWORD sectionFlags) noexcept
