@@ -6,28 +6,36 @@
 #include <type_traits>
 
 #include <ntstatus.h>
+#include <winternl.h>
+
+typedef struct _RTLP_CURDIR_REF
+{
+	LONG RefCount;
+	HANDLE Handle;
+} RTLP_CURDIR_REF, * PRTLP_CURDIR_REF;
+
+typedef struct RTL_RELATIVE_NAME_U {
+	UNICODE_STRING RelativeName;
+	HANDLE ContainingDirectory;
+	PRTLP_CURDIR_REF CurDirRef;
+} RTL_RELATIVE_NAME_U, * PRTL_RELATIVE_NAME_U;
+
+typedef enum _SECTION_INHERIT {
+	ViewShare = 1,
+	ViewUnmap = 2
+} SECTION_INHERIT, * PSECTION_INHERIT;
 
 using MMapLoader::PortableExecutable;
 
 std::optional<std::variant<DWORD, NTSTATUS>> PortableExecutable::Load(const std::string& path) noexcept
 {
-	// close the file if it's already open
-	m_peFile.close();
-	// first, try to open the file
-	m_peFile.open(path, std::ios_base::binary);
-	if (m_peFile.good() == false)
-		return ERROR_FILE_NOT_FOUND;
-	// import headers
-	if (NTSTATUS status = LoadHeaders();
+	// map the file
+	if (NTSTATUS status = MapFile(path);
 		status != STATUS_SUCCESS)
 		return status;
-	// allocate the image
-	if (DWORD status = AllocImage();
-		status != ERROR_SUCCESS)
-		return status;
-	// now load sections
-	if (auto status = LoadSections();
-		status.has_value() == true)
+	// load and verify headers
+	if (NTSTATUS status = LoadHeaders();
+		status != STATUS_SUCCESS)
 		return status;
 	// and process relocations
 	if (NTSTATUS status = ProcessRelocations();
@@ -41,36 +49,15 @@ std::optional<std::variant<DWORD, NTSTATUS>> PortableExecutable::Load(const std:
 	if (NTSTATUS status = InitTLS();
 		status != STATUS_SUCCESS)
 		return status;
-	// free discardable sections
-	if (DWORD status = FreeDiscardableSections();
-		status != ERROR_SUCCESS)
-		return status;
+	// enable exceptions
 	if (NTSTATUS status = EnableExceptions();
 		status != STATUS_SUCCESS)
 		return status;
+	// protect sections
+	if (DWORD status = ProtectSections();
+		status != STATUS_SUCCESS)
+		return status;
 	return std::nullopt;
-}
-
-DWORD PortableExecutable::AllocImage() noexcept
-{
-	// first allocate the image as READWRITE
-	const LPVOID pMem = VirtualAlloc(
-		reinterpret_cast<LPVOID>(m_ntHeaders.OptionalHeader.ImageBase),
-		m_ntHeaders.OptionalHeader.SizeOfImage, MEM_RESERVE, PAGE_NOACCESS);
-	if (pMem == nullptr)
-		return GetLastError();
-	m_image = std::shared_ptr<void>(pMem,
-		std::bind(VirtualFree, std::placeholders::_1,
-			m_ntHeaders.OptionalHeader.SizeOfImage, MEM_DECOMMIT | MEM_RELEASE));
-	// commit the headers and read them in
-	if (VirtualAlloc(m_image.get(), m_ntHeaders.OptionalHeader.SizeOfHeaders,
-		MEM_COMMIT, PAGE_READWRITE) == nullptr)
-		return GetLastError();
-	if (m_peFile.seekg(0, SEEK_SET).fail() == true ||
-		m_peFile.read(reinterpret_cast<char*>(m_image.get()),
-			m_ntHeaders.OptionalHeader.SizeOfHeaders).fail() == true)
-		return ERROR_FILE_CORRUPT;
-	return ERROR_SUCCESS;
 }
 
 int PortableExecutable::Run() noexcept
@@ -81,20 +68,75 @@ int PortableExecutable::Run() noexcept
 	return EntryPoint_f();
 }
 
+NTSTATUS PortableExecutable::MapFile(const std::string& path) noexcept
+{
+	// first, resolve ntdll functions
+	const auto hNtDll = GetModuleHandle("ntdll");
+	if (hNtDll == nullptr)
+		return GetLastError();
+	using NtCreateSection_t = std::add_pointer_t <NTSTATUS NTAPI(PHANDLE SectionHandle,
+		ACCESS_MASK DesiredAccess, POBJECT_ATTRIBUTES ObjectAttributes,
+		PLARGE_INTEGER MaximumSize, ULONG SectionPageProtection,
+		ULONG AllocationAttributes, HANDLE FileHandle)>;
+	using NtMapViewOfSection_t = std::add_pointer_t<NTSTATUS NTAPI(HANDLE SectionHandle,
+		HANDLE ProcessHandle, PVOID* BaseAddress, ULONG_PTR ZeroBits, SIZE_T CommitSize,
+		PLARGE_INTEGER SectionOffset, PSIZE_T ViewSize, SECTION_INHERIT InheritDisposition,
+		ULONG AllocationType, ULONG Protect)>;
+	using NtUnmapViewOfSection_t = std::add_pointer_t<NTSTATUS NTAPI(HANDLE ProcessHandle,
+		PVOID BaseAddress)>;
+	const NtCreateSection_t NtCreateSection_f = reinterpret_cast<NtCreateSection_t>(
+		GetProcAddress(hNtDll, "NtCreateSection"));
+	const NtMapViewOfSection_t NtMapViewOfSection_f = reinterpret_cast<NtMapViewOfSection_t>(
+		GetProcAddress(hNtDll, "NtMapViewOfSection"));
+	const NtUnmapViewOfSection_t NtUnmapViewOfSection_f =
+		reinterpret_cast<NtUnmapViewOfSection_t>(
+			GetProcAddress(hNtDll, "NtUnmapViewOfSection"));
+	if (NtCreateSection_f == nullptr || NtMapViewOfSection_f == nullptr ||
+		NtUnmapViewOfSection_f == nullptr)
+		return GetLastError();
+	// open the file for execution
+	HANDLE fileHandleRaw = nullptr;
+	if (fileHandleRaw = CreateFile(path.c_str(), SYNCHRONIZE | FILE_EXECUTE,
+		NULL, nullptr, OPEN_EXISTING, NULL, nullptr); fileHandleRaw == INVALID_HANDLE_VALUE)
+		return GetLastError();
+	std::unique_ptr<std::remove_pointer_t<HANDLE>,
+		std::add_pointer_t<decltype(CloseHandle)>>
+		fileHandle(fileHandleRaw, CloseHandle);
+	// now we can create a section
+	HANDLE sectionHandleRaw = nullptr;
+	if (NTSTATUS status = NtCreateSection_f(&sectionHandleRaw,
+		SECTION_ALL_ACCESS, nullptr, nullptr, PAGE_EXECUTE, SEC_IMAGE,
+		fileHandle.get()); status != STATUS_SUCCESS)
+		return status;
+	std::shared_ptr<std::remove_pointer_t<HANDLE>>
+		sectionHandle(sectionHandleRaw, CloseHandle);
+	// map the section
+	SIZE_T viewSize = 0;
+	PVOID imageBase = nullptr;
+	if (NTSTATUS status = NtMapViewOfSection_f(sectionHandle.get(),
+		GetCurrentProcess(), &imageBase, 0, 0, nullptr, &viewSize,
+		SECTION_INHERIT::ViewUnmap, 0, PAGE_READWRITE);
+		status != STATUS_SUCCESS)
+		return status;
+	DWORD dwOldProtect = 0;
+	// save the view to be unmapped
+	m_image = std::shared_ptr<void>(imageBase,
+		[NtUnmapViewOfSection_f, sectionHandle](void* imageBase)
+		{
+			// this is a lambda so that the section is closed after
+			// the section is unmapped
+			NtUnmapViewOfSection_f(GetCurrentProcess(), imageBase);
+		});
+	return STATUS_SUCCESS;
+}
+
 NTSTATUS PortableExecutable::LoadHeaders() noexcept
 {
 	// first, load the DOS header
-	if (m_peFile.read(reinterpret_cast<char*>(&m_dosHeader),
-		sizeof(m_dosHeader)).fail() == true)
-		return STATUS_END_OF_FILE;
-	// check the magic number
-	if (m_dosHeader.e_magic != IMAGE_DOS_SIGNATURE)
-		return STATUS_INVALID_IMAGE_NOT_MZ;
+	memcpy(&m_dosHeader, m_image.get(), sizeof(m_dosHeader));
 	// seek to the nt headers and load it
-	if (m_peFile.seekg(m_dosHeader.e_lfanew).fail() == true ||
-		m_peFile.read(reinterpret_cast<char*>(&m_ntHeaders),
-			sizeof(m_ntHeaders)).fail() == true)
-		return STATUS_END_OF_FILE;
+	memcpy(&m_ntHeaders, GetRVA<IMAGE_NT_HEADERS>(m_dosHeader.e_lfanew), 
+		sizeof(IMAGE_NT_HEADERS));
 	// verify the architecture
 	if (m_ntHeaders.FileHeader.Machine != IMAGE_FILE_MACHINE_AMD64 ||
 		m_ntHeaders.OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC)
@@ -102,33 +144,21 @@ NTSTATUS PortableExecutable::LoadHeaders() noexcept
 	// make space for the section headers and load them
 	m_sectionHeaders.resize(m_ntHeaders.FileHeader.NumberOfSections);
 	// read sections
-	for (WORD i = 0; i < m_ntHeaders.FileHeader.NumberOfSections; ++i)
-	{
-		if (m_peFile.read(reinterpret_cast<char*>(&m_sectionHeaders[i]),
-			sizeof(m_sectionHeaders[i])).fail() == true)
-			return STATUS_END_OF_FILE;
-	}
+	auto pSection = GetRVA<IMAGE_SECTION_HEADER>(m_dosHeader.e_lfanew +
+		sizeof(IMAGE_NT_HEADERS));
+	for (WORD i = 0; 
+		i < m_ntHeaders.FileHeader.NumberOfSections; 
+		++i, ++pSection)
+		memcpy(&m_sectionHeaders[i], pSection, sizeof(IMAGE_SECTION_HEADER));
 	return STATUS_SUCCESS;
 }
 
-std::optional<std::variant<DWORD, NTSTATUS>> PortableExecutable::LoadSections() noexcept
+DWORD PortableExecutable::ProtectSections() noexcept
 {
 	// for each section header, load the section into the image
 	for (const auto& sectionHeader : m_sectionHeaders)
 	{
-		// check size to ensure no buffer overrun
-		if (sectionHeader.VirtualAddress + sectionHeader.Misc.VirtualSize >
-			m_ntHeaders.OptionalHeader.SizeOfImage)
-			return STATUS_SECTION_TOO_BIG;
 		const auto sectionAddr = GetRVA<char>(sectionHeader.VirtualAddress);
-		// commit the memory
-		if (VirtualAlloc(sectionAddr, sectionHeader.Misc.VirtualSize, MEM_COMMIT,
-			PAGE_READWRITE) == nullptr)
-			return GetLastError();
-		// read the data to the section
-		if (m_peFile.seekg(sectionHeader.PointerToRawData).fail() == true ||
-			m_peFile.read(sectionAddr, sectionHeader.SizeOfRawData).fail() == true)
-			return STATUS_END_OF_FILE;
 		// change protection to the corresponding protection
 		DWORD oldProtect = 0;
 		if (VirtualProtect(sectionAddr, sectionHeader.Misc.VirtualSize,
@@ -136,7 +166,7 @@ std::optional<std::variant<DWORD, NTSTATUS>> PortableExecutable::LoadSections() 
 			&oldProtect) == FALSE)
 			return GetLastError();
 	}
-	return std::nullopt;
+	return ERROR_SUCCESS;
 }
 
 NTSTATUS PortableExecutable::ProcessRelocations() noexcept
@@ -240,21 +270,6 @@ NTSTATUS PortableExecutable::ExecuteTLSCallbacks() noexcept
 		*pTLSCallback != nullptr; ++pTLSCallback)
 		(*pTLSCallback)(m_image.get(), DLL_PROCESS_ATTACH, nullptr);
 	return STATUS_SUCCESS;
-}
-
-DWORD PortableExecutable::FreeDiscardableSections() noexcept
-{
-	for (const auto& sectionHeader : m_sectionHeaders)
-	{
-		if (sectionHeader.Characteristics & IMAGE_SCN_MEM_DISCARDABLE)
-		{
-			// free the section
-			if (VirtualFree(GetRVA<void>(sectionHeader.PointerToRawData),
-				sectionHeader.SizeOfRawData, MEM_DECOMMIT) == FALSE)
-				return GetLastError();
-		}
-	}
-	return ERROR_SUCCESS;
 }
 
 NTSTATUS PortableExecutable::EnableExceptions() noexcept

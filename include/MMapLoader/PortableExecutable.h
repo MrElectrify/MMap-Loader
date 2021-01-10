@@ -42,15 +42,16 @@ namespace MMapLoader
 		/// @return The return code of the entry point
 		int Run() noexcept;
 	private:
-		/// @brief Allocates memory for the image
+		/// @brief Maps the PE file into memory
+		/// @param path The path to the PE file
 		/// @return The status code
-		DWORD AllocImage() noexcept;
+		NTSTATUS MapFile(const std::string& path) noexcept;
 		/// @brief Loads NT Headers from the pe file
 		/// @return The status code
 		NTSTATUS LoadHeaders() noexcept;
-		/// @brief Loads sections from the pe file
+		/// @brief Protects sections based on their characteristics
 		/// @return The status code
-		std::optional<std::variant<DWORD, NTSTATUS>> LoadSections() noexcept;
+		DWORD ProtectSections() noexcept;
 		/// @brief Process the executable's relocations
 		/// @return The status code
 		NTSTATUS ProcessRelocations() noexcept;
@@ -66,9 +67,6 @@ namespace MMapLoader
 		/// @brief Executes TLS callbacks
 		/// @return The status code
 		NTSTATUS ExecuteTLSCallbacks() noexcept;
-		/// @brief Frees discardable sections
-		/// @return The status code
-		DWORD FreeDiscardableSections() noexcept;
 		/// @brief Enable exception support. Only enables SEH for now
 		/// @return The status code
 		NTSTATUS EnableExceptions() noexcept;
@@ -89,12 +87,11 @@ namespace MMapLoader
 				reinterpret_cast<uintptr_t>(m_image.get()) + offset);
 		}
 
-		std::ifstream m_peFile;
+		_LDR_DATA_TABLE_ENTRY_BASE64 m_loaderEntry{};
 
 		IMAGE_DOS_HEADER m_dosHeader;
 		IMAGE_NT_HEADERS m_ntHeaders;
 		std::vector<IMAGE_SECTION_HEADER> m_sectionHeaders;
-		_LDR_DATA_TABLE_ENTRY_BASE64 m_loaderEntry{};
 
 		std::shared_ptr<void> m_image;
 	};
