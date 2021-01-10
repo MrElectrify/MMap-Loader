@@ -250,22 +250,28 @@ NTSTATUS PortableExecutable::InitTLS() noexcept
 
 NTSTATUS PortableExecutable::InitLoaderEntry() noexcept
 {
+	using LdrpInsertModuleToIndex_t = std::add_pointer_t<DWORD NTAPI(
+		_LDR_DATA_TABLE_ENTRY64* pTblEntry, IMAGE_NT_HEADERS* pNTHeaders)>;
 	using RtlInitUnicodeString_t = std::add_pointer_t<decltype(RtlInitUnicodeString)>;
+	const static LdrpInsertModuleToIndex_t LdrpInsertModuleToIndex_f =
+		Util::FindPatternIndirect<LdrpInsertModuleToIndex_t>(GetModuleHandle("ntdll"),
+			"\xE8\x00\x00\x00\x00\x45\x33\xC9\x33\xD2", 1);
 	const static RtlInitUnicodeString_t RtlInitUnicodeString_f =
 		reinterpret_cast<RtlInitUnicodeString_t>(GetProcAddress(GetModuleHandle("ntdll"),
 			"RtlInitUnicodeString"));
-	if (RtlInitUnicodeString_f == nullptr)
+	if (LdrpInsertModuleToIndex_f == nullptr || RtlInitUnicodeString_f == nullptr)
 		return STATUS_ACPI_FATAL;
 	m_loaderEntry.DllBase = reinterpret_cast<uint64_t>(m_image.get());
-	m_loaderEntry.SizeOfImage = m_ntHeaders.OptionalHeader.SizeOfImage;
-	m_loaderEntry.EntryPoint = reinterpret_cast<uint64_t>(
-		GetRVA<void>(m_ntHeaders.OptionalHeader.AddressOfEntryPoint));
 	RtlInitUnicodeString_f(&m_loaderEntry.BaseDllName, m_modName.c_str());
 	RtlInitUnicodeString_f(&m_loaderEntry.FullDllName, m_modPath.c_str());
-	m_loaderEntry.ObseleteLoadCount = -1;
 	m_loaderEntry.DdagNode = reinterpret_cast<uint64_t>(&m_ddagNode);
 	m_ddagNode.State = _LDR_DDAG_STATE::LdrModulesReadyToRun;
 	m_ddagNode.LoadCount = -1;
+	// initialize the index
+	if (DWORD index = LdrpInsertModuleToIndex_f(&m_loaderEntry,
+		GetRVA<IMAGE_NT_HEADERS>(m_dosHeader.e_lfanew));
+		index == 0)
+		return STATUS_ACPI_FATAL;
 	return STATUS_SUCCESS;
 }
 
