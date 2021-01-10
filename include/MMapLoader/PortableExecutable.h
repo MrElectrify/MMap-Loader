@@ -40,7 +40,7 @@ namespace MMapLoader
 		std::optional<std::variant<DWORD, NTSTATUS>> Load(const std::string& path) noexcept;
 		/// @brief Runs the entry point of the executable
 		/// @return The return code of the entry point
-		int Run() noexcept;
+		BOOL Run() noexcept;
 	private:
 		/// @brief Maps the PE file into memory
 		/// @param path The path to the PE file

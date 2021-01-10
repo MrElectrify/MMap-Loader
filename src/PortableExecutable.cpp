@@ -58,12 +58,14 @@ std::optional<std::variant<DWORD, NTSTATUS>> PortableExecutable::Load(const std:
 	return std::nullopt;
 }
 
-int PortableExecutable::Run() noexcept
+BOOL PortableExecutable::Run() noexcept
 {
 	if (m_image.get() == nullptr)
 		return -1;
-	auto EntryPoint_f = GetRVA<int()>(m_ntHeaders.OptionalHeader.AddressOfEntryPoint);
-	return EntryPoint_f();
+	// call it as a DLL even though it might not be
+	auto EntryPoint_f = GetRVA<BOOL WINAPI(PVOID, DWORD, LPVOID)>(
+		m_ntHeaders.OptionalHeader.AddressOfEntryPoint);
+	return EntryPoint_f(m_image.get(), DLL_PROCESS_ATTACH, nullptr);
 }
 
 NTSTATUS PortableExecutable::MapFile(const std::string& path) noexcept

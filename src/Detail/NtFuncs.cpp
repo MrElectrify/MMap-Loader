@@ -63,5 +63,5 @@ bool NT::Initialize() noexcept
 			"\xE8\x00\x00\x00\x00\x41\x09\x5E\x68", 1);
 		RtlInsertInvertedFunctionTable_f == nullptr)
 		return false;
-	return true;
+	return res = true;
 }

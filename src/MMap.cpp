@@ -5,6 +5,7 @@
 #include <array>
 #include <filesystem>
 #include <system_error>
+#include <vector>
 
 const char* FormatError(int error)
 {
@@ -28,7 +29,8 @@ const char* FormatNTStatus(NTSTATUS status)
 	return buf.data();
 }
 
-void Run(const char* exePathStr, size_t exePathLen, void* dllBuf, size_t dllBufLen, Result* result)
+void Run(const char* exePathStr, size_t exePathLen, const char** dllPaths, 
+	size_t* dllBufLens, size_t numDlls, Result* result)
 {
 	std::filesystem::path exePath(std::string_view(exePathStr, exePathLen));
 	// set the current directory to the root of the exe
@@ -62,6 +64,32 @@ void Run(const char* exePathStr, size_t exePathLen, void* dllBuf, size_t dllBufL
 			break;
 		}
 		return;
+	}
+	std::vector<MMapLoader::PortableExecutable> dlls;
+	// load all DLLs
+	for (size_t i = 0; i < numDlls; ++i)
+	{
+		MMapLoader::PortableExecutable dll;
+		if (auto status = dll.Load(std::string(dllPaths[i], dllBufLens[i]));
+			status.has_value() == true)
+		{
+			result->success = false;
+			switch (status->index())
+			{
+			case 0:
+				result->status = std::get<DWORD>(status.value());
+				result->statusStr = FormatError(result->status);
+				break;
+			case 1:
+				result->status = std::get<NTSTATUS>(status.value());
+				result->statusStr = FormatNTStatus(result->status);
+				break;
+			}
+			return;
+		}
+		// call DllMain
+		if (dll.Run() == TRUE)
+			dlls.push_back(std::move(dll));
 	}
 	executable.Run();
 	result->success = true;
