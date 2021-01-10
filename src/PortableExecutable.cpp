@@ -84,11 +84,11 @@ NTSTATUS PortableExecutable::MapFile(const std::string& path) noexcept
 		ULONG AllocationType, ULONG Protect)>;
 	using NtUnmapViewOfSection_t = std::add_pointer_t<NTSTATUS NTAPI(HANDLE ProcessHandle,
 		PVOID BaseAddress)>;
-	const NtCreateSection_t NtCreateSection_f = reinterpret_cast<NtCreateSection_t>(
+	const static NtCreateSection_t NtCreateSection_f = reinterpret_cast<NtCreateSection_t>(
 		GetProcAddress(hNtDll, "NtCreateSection"));
-	const NtMapViewOfSection_t NtMapViewOfSection_f = reinterpret_cast<NtMapViewOfSection_t>(
+	const static NtMapViewOfSection_t NtMapViewOfSection_f = reinterpret_cast<NtMapViewOfSection_t>(
 		GetProcAddress(hNtDll, "NtMapViewOfSection"));
-	const NtUnmapViewOfSection_t NtUnmapViewOfSection_f =
+	const static NtUnmapViewOfSection_t NtUnmapViewOfSection_f =
 		reinterpret_cast<NtUnmapViewOfSection_t>(
 			GetProcAddress(hNtDll, "NtUnmapViewOfSection"));
 	if (NtCreateSection_f == nullptr || NtMapViewOfSection_f == nullptr ||
@@ -121,7 +121,7 @@ NTSTATUS PortableExecutable::MapFile(const std::string& path) noexcept
 	DWORD dwOldProtect = 0;
 	// save the view to be unmapped
 	m_image = std::shared_ptr<void>(imageBase,
-		[NtUnmapViewOfSection_f, sectionHandle](void* imageBase)
+		[sectionHandle](void* imageBase)
 		{
 			// this is a lambda so that the section is closed after
 			// the section is unmapped
