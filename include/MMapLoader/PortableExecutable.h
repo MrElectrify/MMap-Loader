@@ -41,6 +41,8 @@ namespace MMapLoader
 		/// @brief Runs the entry point of the executable
 		/// @return The return code of the entry point
 		BOOL Run() noexcept;
+		/// @return The base address of the executable
+		void* GetImageBase() const noexcept { return m_image.get(); }
 	private:
 		/// @brief Maps the PE file into memory
 		/// @param path The path to the PE file
