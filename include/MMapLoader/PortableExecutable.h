@@ -43,6 +43,12 @@ namespace MMapLoader
 		BOOL Run() noexcept;
 		/// @return The base address of the executable
 		void* GetImageBase() const noexcept { return m_image.get(); }
+	protected:
+		/// @brief Resolves imports from a given IAT
+		/// @param pImportDesc The IAT to resolve
+		/// @return The status code
+		std::optional<std::variant<DWORD, NTSTATUS>>
+			ResolveImports(IMAGE_IMPORT_DESCRIPTOR const* pImportDesc) noexcept;
 	private:
 		/// @brief Maps the PE file into memory
 		/// @param path The path to the PE file
