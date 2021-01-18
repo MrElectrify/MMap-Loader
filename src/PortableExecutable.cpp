@@ -68,6 +68,45 @@ BOOL PortableExecutable::Run() noexcept
 	return EntryPoint_f(m_image.get(), DLL_PROCESS_ATTACH, nullptr);
 }
 
+std::optional<std::variant<DWORD, NTSTATUS>> 
+PortableExecutable::ResolveImports(IMAGE_IMPORT_DESCRIPTOR const* pImportDesc) noexcept
+{
+	for (; pImportDesc->Name != 0; ++pImportDesc)
+	{
+		LPSTR libName = GetRVA<std::remove_pointer_t<LPSTR>>(pImportDesc->Name);
+		// load the imported DLL
+		HMODULE hLib = LoadLibraryA(libName);
+		if (hLib == nullptr)
+			return STATUS_OBJECTID_NOT_FOUND;
+		// enumerate thunks and fill out import functions
+		auto pLookup = pImportDesc->OriginalFirstThunk != 0 ?
+			GetRVA<IMAGE_THUNK_DATA>(pImportDesc->OriginalFirstThunk) :
+			GetRVA<IMAGE_THUNK_DATA>(pImportDesc->FirstThunk);
+		auto pThunk = GetRVA<IMAGE_THUNK_DATA>(pImportDesc->FirstThunk);
+		for (; pThunk->u1.AddressOfData != 0; ++pThunk, ++pLookup)
+		{
+			LPCSTR procName = (pThunk->u1.Ordinal & IMAGE_ORDINAL_FLAG) ?
+				reinterpret_cast<LPCSTR>(pThunk->u1.Ordinal & 0xffff) :
+				GetRVA<IMAGE_IMPORT_BY_NAME>(pThunk->u1.AddressOfData)->Name;
+			LPVOID function = GetProcAddress(hLib, procName);
+			// set the proper protection of the thunk
+			DWORD dwOldThunkProt = 0;
+			if (VirtualProtect(pThunk, sizeof(*pThunk),
+				PAGE_READWRITE, &dwOldThunkProt) == FALSE)
+				return GetLastError();
+			// set the First thunk's function
+			pThunk->u1.Function = reinterpret_cast<ULONGLONG>(function);
+			// and restore protection
+			if (VirtualProtect(pThunk, sizeof(*pThunk),
+				dwOldThunkProt, &dwOldThunkProt) == FALSE)
+				return GetLastError();
+			if (pThunk->u1.Function == 0)
+				return STATUS_NOT_FOUND;
+		}
+	};
+	return std::nullopt;
+}
+
 NTSTATUS PortableExecutable::MapFile(const std::string& path) noexcept
 {
 	// open the file for execution
@@ -169,40 +208,7 @@ std::optional<std::variant<DWORD, NTSTATUS>> PortableExecutable::ResolveImports(
 		m_ntHeaders.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
 	// import all of the descriptors
 	auto pImportDesc = GetRVA<const IMAGE_IMPORT_DESCRIPTOR>(importDir.VirtualAddress);
-	for (; pImportDesc->Name != 0; ++pImportDesc)
-	{
-		LPSTR libName = GetRVA<std::remove_pointer_t<LPSTR>>(pImportDesc->Name);
-		// load the imported DLL
-		HMODULE hLib = LoadLibraryA(libName);
-		if (hLib == nullptr)
-			return STATUS_OBJECTID_NOT_FOUND;
-		// enumerate thunks and fill out import functions
-		auto pLookup = pImportDesc->OriginalFirstThunk != 0 ?
-			GetRVA<IMAGE_THUNK_DATA>(pImportDesc->OriginalFirstThunk) :
-			GetRVA<IMAGE_THUNK_DATA>(pImportDesc->FirstThunk);
-		auto pThunk = GetRVA<IMAGE_THUNK_DATA>(pImportDesc->FirstThunk);
-		for (;pThunk->u1.AddressOfData != 0; ++pThunk, ++pLookup)
-		{
-			LPCSTR procName = (pThunk->u1.Ordinal & IMAGE_ORDINAL_FLAG) ?
-				reinterpret_cast<LPCSTR>(pThunk->u1.Ordinal & 0xffff) :
-				GetRVA<IMAGE_IMPORT_BY_NAME>(pThunk->u1.AddressOfData)->Name;
-			LPVOID function = GetProcAddress(hLib, procName);
-			// set the proper protection of the thunk
-			DWORD dwOldThunkProt = 0;
-			if (VirtualProtect(pThunk, sizeof(*pThunk),
-				PAGE_READWRITE, &dwOldThunkProt) == FALSE)
-				return GetLastError();
-			// set the First thunk's function
-			pThunk->u1.Function = reinterpret_cast<ULONGLONG>(function);
-			// and restore protection
-			if (VirtualProtect(pThunk, sizeof(*pThunk),
-				dwOldThunkProt, &dwOldThunkProt) == FALSE)
-				return GetLastError();
-			if (pThunk->u1.Function == 0)
-				return STATUS_NOT_FOUND;
-		}
-	};
-	return std::nullopt;
+	return ResolveImports(pImportDesc);
 }
 
 NTSTATUS PortableExecutable::InitTLS() noexcept
