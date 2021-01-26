@@ -36,8 +36,10 @@ namespace MMapLoader
 
 		/// @brief Attempts to load an executable from a file
 		/// @param path The path of the executable
+		/// @param dev Appends "_dev" to the executable in loader structures,
+		/// in case the suffix is expected
 		/// @return The status code
-		std::optional<std::variant<DWORD, NTSTATUS>> Load(const std::string& path) noexcept;
+		std::optional<std::variant<DWORD, NTSTATUS>> Load(const std::string& path, bool dev = false) noexcept;
 		/// @brief Runs the entry point of the executable
 		/// @return The return code of the entry point
 		BOOL Run() noexcept;
@@ -103,6 +105,8 @@ namespace MMapLoader
 		/// @param sectionFlags The section's flags
 		/// @return The protection flags
 		static DWORD SectionFlagsToProtectionFlags(DWORD sectionFlags) noexcept;
+
+		bool m_dev = false;
 
 		Detail::NT::_LDR_DATA_TABLE_ENTRY64 m_loaderEntry{};
 		Detail::NT::_LDR_DDAG_NODE64 m_ddagNode{};

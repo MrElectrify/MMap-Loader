@@ -14,8 +14,9 @@ using MMapLoader::PortableExecutable;
 
 using namespace MMapLoader::Detail;
 
-std::optional<std::variant<DWORD, NTSTATUS>> PortableExecutable::Load(const std::string& path) noexcept
+std::optional<std::variant<DWORD, NTSTATUS>> PortableExecutable::Load(const std::string& path, bool dev) noexcept
 {
+	m_dev = dev;
 	// initialize NT
 	if (Detail::NT::Initialize() == false)
 		return STATUS_ACPI_FATAL;
@@ -144,7 +145,10 @@ NTSTATUS PortableExecutable::MapFile(const std::string& path) noexcept
 		});
 	std::filesystem::path fPath(path);
 	m_modPath = fPath.wstring();
-	m_modName = fPath.stem().wstring() + fPath.extension().wstring();
+	m_modName = fPath.stem().wstring();
+	if (m_dev == true)
+		m_modName += L"_dev";
+	m_modName += fPath.extension().wstring();
 	return STATUS_SUCCESS;
 }
 
