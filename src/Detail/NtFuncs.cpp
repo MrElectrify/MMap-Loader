@@ -1,5 +1,6 @@
 #include <MMapLoader/Detail/NtFuncs.h>
 
+#include <MMapLoader/Detail/FnPtr.h>
 #include <MMapLoader/Detail/Util.h>
 
 #include <atomic>
@@ -27,19 +28,19 @@ bool NT::Initialize() noexcept
 	const auto hNTDll = GetModuleHandle("ntdll");
 	if (hNTDll == nullptr)
 		return false;
-	if (LdrpHandleTlsData_f = Util::FindPatternIndirect
-		<LdrpHandleTlsData_t>(hNTDll,
-			"\xE8\x00\x00\x00\x00\x8B\xD8\x85\xC0\x78\x0B\xE8\x00\x00\x00\x00", 1);
+	if (LdrpHandleTlsData_f = FnPtr<LdrpHandleTlsData_t>(hNTDll,
+			"\xE8\x00\x00\x00\x00\x8B\xD8\x85\xC0\x78\x0B"
+			"\xE8\x00\x00\x00\x00", 1, true).GetPtr();
 		LdrpHandleTlsData_f == nullptr)
 		return false;
-	if (LdrpInsertDataTableEntry_f = Util::FindPatternIndirect
-		<LdrpInsertDataTableEntry_t>(hNTDll,
-			"\xE8\x00\x00\x00\x00\x48\x8B\xD5\x48\x8B\xCF", 1);
+	if (LdrpInsertDataTableEntry_f = FnPtr<LdrpInsertDataTableEntry_t>(
+		hNTDll, "\xE8\x00\x00\x00\x00\x48\x8B\xD5\x48\x8B\xCF", 1, 
+		true).GetPtr();
 		LdrpInsertDataTableEntry_f == nullptr)
 		return false;
-	if (LdrpInsertModuleToIndex_f = Util::FindPatternIndirect
-		<LdrpInsertModuleToIndex_t>(hNTDll,
-			"\xE8\x00\x00\x00\x00\x45\x33\xC9\x33\xD2", 1);
+	if (LdrpInsertModuleToIndex_f = FnPtr<LdrpInsertModuleToIndex_t>(
+			hNTDll, "\xE8\x00\x00\x00\x00\x45\x33\xC9\x33\xD2", 1, true).OrElse(
+			hNTDll, "\xE8\x00\x00\x00\x00\x33\xD2\x44\x8D\x42\x01", 1, true).GetPtr();
 		LdrpInsertModuleToIndex_f == nullptr)
 		return false;
 	if (NtCreateSection_f = reinterpret_cast<NtCreateSection_t>(
