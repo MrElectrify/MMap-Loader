@@ -40,4 +40,3 @@ endif ()
 include(cmake/CompilerWarnings.cmake)
 
 add_subdirectory(src)
-add_subdirectory(Test)
