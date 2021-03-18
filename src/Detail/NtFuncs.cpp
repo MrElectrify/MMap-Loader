@@ -3,6 +3,8 @@
 #include <MMapLoader/Detail/FnPtr.h>
 #include <MMapLoader/Detail/Util.h>
 
+#include <CompileTimeEncryption/XorStr.h>
+
 #include <atomic>
 
 #include <Windows.h>
@@ -25,7 +27,7 @@ bool NT::Initialize() noexcept
 	if (hasInit == true)
 		return res;
 	hasInit = true;
-	const auto hNTDll = GetModuleHandle("ntdll");
+	const auto hNTDll = GetModuleHandle(XorStr("ntdll"));
 	if (hNTDll == nullptr)
 		return false;
 	if (LdrpHandleTlsData_f = FnPtr<LdrpHandleTlsData_t>(hNTDll,
@@ -44,24 +46,23 @@ bool NT::Initialize() noexcept
 		LdrpInsertModuleToIndex_f == nullptr)
 		return false;
 	if (NtCreateSection_f = reinterpret_cast<NtCreateSection_t>(
-		GetProcAddress(hNTDll, "NtCreateSection"));
+			GetProcAddress(hNTDll, XorStr("NtCreateSection")));
 		NtCreateSection_f == nullptr)
 		return false;
 	if (NtMapViewOfSection_f = reinterpret_cast<NtMapViewOfSection_t>(
-		GetProcAddress(hNTDll, "NtMapViewOfSection"));
+			GetProcAddress(hNTDll, XorStr("NtMapViewOfSection")));
 		NtCreateSection_f == nullptr)
 		return false;
 	if (NtUnmapViewOfSection_f = reinterpret_cast<NtUnmapViewOfSection_t>(
-		GetProcAddress(hNTDll, "NtUnmapViewOfSection"));
+			GetProcAddress(hNTDll, XorStr("NtUnmapViewOfSection")));
 		NtCreateSection_f == nullptr)
 		return false;
 	if (RtlInitUnicodeString_f = reinterpret_cast<RtlInitUnicodeString_t>(
-		GetProcAddress(hNTDll, "RtlInitUnicodeString"));
+			GetProcAddress(hNTDll, XorStr("RtlInitUnicodeString")));
 		RtlInitUnicodeString_f == nullptr)
 		return false;
-	if (RtlInsertInvertedFunctionTable_f = Util::FindPatternIndirect
-		<RtlInsertInvertedFunctionTable_t>(hNTDll,
-			"\xE8\x00\x00\x00\x00\x41\x09\x5E\x68", 1);
+	if (RtlInsertInvertedFunctionTable_f = FnPtr<RtlInsertInvertedFunctionTable_t>(
+			hNTDll, "\xE8\x00\x00\x00\x00\x41\x09\x5E\x68", 1, true).GetPtr();
 		RtlInsertInvertedFunctionTable_f == nullptr)
 		return false;
 	return res = true;

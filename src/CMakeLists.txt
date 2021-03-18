@@ -6,3 +6,6 @@ add_library(MMapLoader ${sourceFiles})
 
 target_include_directories(MMapLoader
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../include)
+
+target_link_libraries(MMapLoader
+    PUBLIC CompileTimeEncryption)

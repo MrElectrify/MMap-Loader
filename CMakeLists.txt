@@ -5,8 +5,10 @@ project(mmap-loader
 	DESCRIPTION "Manual map loader"
 	LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
+
+option(ENCRYPT_STRINGS "Encrypt all strings" OFF)
 
 if(WIN32)
     macro(get_WIN32_WINNT version)
@@ -39,4 +41,5 @@ endif ()
 
 include(cmake/CompilerWarnings.cmake)
 
+add_subdirectory(extern)
 add_subdirectory(src)
