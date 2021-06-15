@@ -12,7 +12,10 @@
 #include <type_traits>
 
 // Windows includes
+#pragma warning(push)
+#pragma warning(disable : 4005)
 #include <ntstatus.h>
+#pragma warning(pop)
 
 namespace MMapLoader
 {
