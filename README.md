@@ -13,7 +13,7 @@ MMap-Loader is a Windows Portable Executable (PE) loader. It maps a view of an e
 ## Known Limitations
 - 32-bit is not fully supported (but is an easy fix)
 - `GetModuleInformation` and related functions will not find the loaded module. This is because the linked lists that are used to find the module for these functions are sanity checked and protected by the kernel, and the first access after modifying these structures would result in a fatal OS exception. A suggested alternative is to use `VirtualQuery` to get the size of allocation
-- Relies on function signatures for all `Ldrp` functions. This can be remedied by downloading the `ntdll.dll` PDB and walking through the symbols, but was excessive for my use case. This does mean that Windows updates may break some signatures causing failure, and platforms like Wine do not work because they don't have an implementation of these functions
+- Relies on function signatures for all `Ldrp` functions. This can be remedied by downloading the `ntdll.dll` PDB and walking through the symbols, but was excessive for my use case. This does mean that Windows updates may break some signatures causing failure, and platforms like Wine do not work because they don't have an implementation of these functions. Last tested on Windows 10 Pro 20H2 build 19042.1052
 - PEs are not un-loaded from OS structures to reduce the number of required signatures to upkeep. If necessary, functions exist to reverse all OS calls.
 
 ## Example
